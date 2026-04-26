@@ -1,304 +1,491 @@
-// =========================
-// IMPORTS
-// =========================
-import { useEffect, useState } from "react";
-import { databases, account, DATABASE_ID } from "./lib/appwrite";
-import { payWinner } from "./lib/wallet"; // ✅ FIXED
+import { useEffect, useRef, useState } from "react";
+import { databases, DATABASE_ID, account } from "./lib/appwrite";
 
 const GAME_COLLECTION = "games";
-const TURN_LIMIT = 24 * 60 * 60 * 1000;
+const MATCH_COLLECTION = "matches";
 
 // =========================
-// HELPERS
+// SAFE PARSE GAME
 // =========================
-function isExpired(turnStartTime) {
-  if (!turnStartTime) return false;
-  return Date.now() - new Date(turnStartTime).getTime() > TURN_LIMIT;
+function parseGame(g) {
+  return {
+    ...g,
+    players: g.players ? g.players.split(",").filter(Boolean) : [],
+    deck: g.deck ? g.deck.split(",").filter(Boolean) : [],
+    discard: g.discard || "",
+    hands: g.hands
+      ? g.hands.split("|").map(p =>
+          p ? p.split(",").filter(Boolean) : []
+        )
+      : [[], []],
+    pendingPick: Number(g.pendingPick || 0),
+    history: g.history ? g.history.split("||") : []
+  };
 }
 
-function createDeck() {
-  const shapes = ["circle", "triangle", "square", "star", "cross"];
-  const deck = [];
+// =========================
+// ENCODE GAME
+// =========================
+function encodeGame(g) {
+  return {
+    hands: g.hands.map(p => p.join(",")).join("|"),
+    deck: g.deck.join(","),
+    discard: g.discard,
+    pendingPick: String(g.pendingPick || 0),
+    history: g.history.slice(-10).join("||")
+  };
+}
 
-  for (const shape of shapes) {
-    for (let i = 1; i <= 13; i++) {
-      if (i === 6 || i === 9) continue;
-      deck.push({ shape, number: i });
-    }
-    deck.push({ shape, number: 14 });
+// =========================
+// SAFE DECODE CARD
+// =========================
+function decodeCard(str) {
+  if (!str || typeof str !== "string") return null;
+
+  const map = {
+    c: "circle",
+    t: "triangle",
+    s: "square",
+    r: "star",
+    x: "cross"
+  };
+
+  const shape = map[str[0]];
+  const number = Number(str.slice(1));
+
+  if (!shape || !number) return null;
+
+  return { shape, number };
+}
+
+// =========================
+// DRAW CARD (CANVAS)
+// =========================
+const cache = new Map();
+
+function drawCard(card) {
+  if (!card) return null;
+
+  const key = `${card.shape}_${card.number}`;
+  if (cache.has(key)) return cache.get(key);
+
+  const c = document.createElement("canvas");
+  c.width = 80;
+  c.height = 120;
+  const ctx = c.getContext("2d");
+
+  ctx.fillStyle = "#fff";
+  ctx.fillRect(0, 0, 80, 120);
+
+  ctx.strokeStyle = "#e11d48";
+  ctx.lineWidth = 3;
+  ctx.strokeRect(2, 2, 76, 116);
+
+  ctx.fillStyle = "#e11d48";
+  ctx.font = "bold 14px Arial";
+  ctx.fillText(card.number, 6, 18);
+
+  const cx = 40, cy = 60;
+
+  if (card.shape === "circle") {
+    ctx.beginPath();
+    ctx.arc(cx, cy, 14, 0, Math.PI * 2);
+    ctx.fill();
   }
 
-  return deck.sort(() => Math.random() - 0.5);
+  if (card.shape === "square") {
+    ctx.fillRect(cx - 12, cy - 12, 24, 24);
+  }
+
+  if (card.shape === "triangle") {
+    ctx.beginPath();
+    ctx.moveTo(cx, cy - 14);
+    ctx.lineTo(cx - 14, cy + 14);
+    ctx.lineTo(cx + 14, cy + 14);
+    ctx.fill();
+  }
+
+  if (card.shape === "star") {
+    ctx.fillText("★", cx - 8, cy + 5);
+  }
+
+  if (card.shape === "cross") {
+    ctx.fillRect(cx - 3, cy - 14, 6, 28);
+    ctx.fillRect(cx - 14, cy - 3, 28, 6);
+  }
+
+  const img = c.toDataURL();
+  cache.set(key, img);
+  return img;
 }
 
 // =========================
 // COMPONENT
 // =========================
-export default function WhotGame({ gameId, stake = 0 }) {
+export default function WhotGame({ gameId, goHome }) {
   const [game, setGame] = useState(null);
+  const [match, setMatch] = useState(null);
   const [userId, setUserId] = useState(null);
+  const [processing, setProcessing] = useState(false);
+
+  const gameRef = useRef(null);
 
   // LOAD USER
   useEffect(() => {
-    account.get().then((u) => setUserId(u.$id));
+    account.get().then(u => setUserId(u.$id));
   }, []);
 
-  // LOAD GAME
+  // LOAD GAME + REALTIME
   useEffect(() => {
-    if (!gameId) return;
+    if (!gameId || !userId) return;
 
-    async function loadGame() {
-      const g = await databases.getDocument(
-        DATABASE_ID,
-        GAME_COLLECTION,
-        gameId
-      );
+    const load = async () => {
+      try {
+        const g = await databases.getDocument(
+          DATABASE_ID,
+          GAME_COLLECTION,
+          gameId
+        );
 
-      setGame({
-        ...g,
-        deck: JSON.parse(g.deck),
-        discard: JSON.parse(g.discard),
-        hands: JSON.parse(g.hands),
-        scores: JSON.parse(g.scores)
-      });
-    }
+        const parsed = parseGame(g);
+        setGame(parsed);
+        gameRef.current = parsed;
+      } catch {
+        setTimeout(load, 800);
+      }
+    };
 
-    loadGame();
-  }, [gameId]);
-
-  // REALTIME
-  useEffect(() => {
-    if (!gameId) return;
+    load();
 
     const unsub = databases.client.subscribe(
       `databases.${DATABASE_ID}.collections.${GAME_COLLECTION}.documents.${gameId}`,
-      (res) => {
-        const g = res.payload;
-
-        setGame({
-          ...g,
-          deck: JSON.parse(g.deck),
-          discard: JSON.parse(g.discard),
-          hands: JSON.parse(g.hands),
-          scores: JSON.parse(g.scores)
-        });
+      res => {
+        const parsed = parseGame(res.payload);
+        setGame(parsed);
+        gameRef.current = parsed;
       }
     );
 
     return () => unsub();
-  }, [gameId]);
+  }, [gameId, userId]);
 
-  // TIMEOUT
+  // LOAD MATCH
   useEffect(() => {
-    if (!game || !userId) return;
+    if (!game?.matchId) return;
 
-    const interval = setInterval(async () => {
-      if (game.status === "finished") return;
-
-      if (isExpired(game.turnStartTime)) {
-        if (game.turn !== userId) return;
-
-        await handleTimeout(game);
-      }
-    }, 5000);
-
-    return () => clearInterval(interval);
-  }, [game, userId]);
+    databases
+      .getDocument(DATABASE_ID, MATCH_COLLECTION, game.matchId)
+      .then(setMatch)
+      .catch(() => {});
+  }, [game]);
 
   // =========================
-  // TIMEOUT HANDLER
+  // GUARDS
   // =========================
-  async function handleTimeout(g) {
-    const hands = g.hands;
-    if (!hands || hands.length < 2) return;
-
-    const p1 = hands[0].length;
-    const p2 = hands[1].length;
-
-    let winnerId = null;
-
-    if (p1 < p2) winnerId = g.players[0];
-    else if (p2 < p1) winnerId = g.players[1];
-
-    // ✅ FIXED payout
-    if (winnerId === userId) {
-      await payWinner(userId, stake * 2);
-    }
-
-    await databases.updateDocument(
-      DATABASE_ID,
-      GAME_COLLECTION,
-      g.$id,
-      {
-        status: "finished",
-        winnerId: winnerId || ""
-      }
-    );
+  if (!game || !userId) {
+    return <div style={styles.center}>Loading...</div>;
   }
 
-  // =========================
-  // PLAY CARD
-  // =========================
-  async function playCard(cardIndex) {
-    if (!game || game.turn !== userId) return;
-
-    const copy = JSON.parse(JSON.stringify(game));
-
-    const playerIndex = copy.players.indexOf(userId);
-    const opponentIndex = playerIndex === 0 ? 1 : 0;
-
-    const card = copy.hands[playerIndex]?.[cardIndex];
-    const top = copy.discard.at(-1);
-
-    if (!card || !top) return;
-    if (card.number !== top.number && card.shape !== top.shape) return;
-
-    copy.hands[playerIndex].splice(cardIndex, 1);
-    copy.discard.push(card);
-
-    if (copy.hands[playerIndex].length === 0) {
-      await handleRoundWin(playerIndex, copy);
-      return;
-    }
-
-    const nextPlayer = copy.players[opponentIndex];
-
-    await databases.updateDocument(
-      DATABASE_ID,
-      GAME_COLLECTION,
-      gameId,
-      {
-        hands: JSON.stringify(copy.hands),
-        discard: JSON.stringify(copy.discard),
-        turn: nextPlayer,
-        turnStartTime: new Date().toISOString()
-      }
-    );
+  if (!game.players.includes(userId)) {
+    return <div style={styles.center}>Not your game</div>;
   }
 
+  const pIndex = game.players.indexOf(userId);
+  const oIndex = pIndex === 0 ? 1 : 0;
+
+  const hand = game.hands[pIndex] || [];
+  const opponentHand = game.hands[oIndex] || [];
+
+  const top = decodeCard(game.discard);
+
   // =========================
-  // DRAW CARD
+  // PLAY CARD (FIXED)
   // =========================
-  async function drawCard() {
-    if (!game || game.turn !== userId) return;
+  async function playCard(i) {
+  if (processing) return;
 
-    const copy = JSON.parse(JSON.stringify(game));
+  const currentGame = gameRef.current;
+  if (!currentGame) return;
 
-    const playerIndex = copy.players.indexOf(userId);
-    const opponentIndex = playerIndex === 0 ? 1 : 0;
-
-    if (!copy.deck.length) return;
-
-    copy.hands[playerIndex].push(copy.deck.pop());
-
-    const nextPlayer = copy.players[opponentIndex];
-
-    await databases.updateDocument(
-      DATABASE_ID,
-      GAME_COLLECTION,
-      gameId,
-      {
-        hands: JSON.stringify(copy.hands),
-        deck: JSON.stringify(copy.deck),
-        turn: nextPlayer,
-        turnStartTime: new Date().toISOString()
-      }
-    );
+  if (currentGame.turn !== userId) {
+    alert("⏳ Not your turn");
+    return;
   }
 
-  // =========================
-  // ROUND WIN
-  // =========================
-  async function handleRoundWin(playerIndex, copy) {
-    const scores = copy.scores;
+  const myIndex = currentGame.players.indexOf(userId);
+  const cardStr = currentGame.hands[myIndex]?.[i];
 
-    if (playerIndex === 0) scores.p1++;
-    else scores.p2++;
+  if (!cardStr) {
+    alert("Invalid card");
+    return;
+  }
 
-    if (scores.p1 === 2 || scores.p2 === 2) {
-      const winnerId =
-        scores.p1 > scores.p2
-          ? copy.players[0]
-          : copy.players[1];
+  const current = decodeCard(cardStr);
+  const top = decodeCard(currentGame.discard);
 
-      // ✅ FIXED payout
-      if (winnerId === userId) {
-        await payWinner(userId, stake * 2);
-      }
+  if (!current || !top) {
+    alert("Game sync error");
+    return;
+  }
 
+  // ❌ INVALID MOVE
+  if (
+    current.number !== top.number &&
+    current.shape !== top.shape &&
+    current.number !== 14
+  ) {
+    alert("❌ Invalid move");
+    return;
+  }
+
+  setProcessing(true);
+
+  try {
+    const fresh = await databases.getDocument(
+      DATABASE_ID,
+      GAME_COLLECTION,
+      gameId
+    );
+
+    const g = parseGame(fresh);
+
+    const myIdx = g.players.indexOf(userId);
+    const oppIdx = myIdx === 0 ? 1 : 0;
+
+    const card = g.hands[myIdx]?.[i];
+    if (!card) return;
+
+    const decoded = decodeCard(card);
+    const topDecoded = decodeCard(g.discard);
+
+    if (!decoded || !topDecoded) return;
+
+    if (
+      decoded.number !== topDecoded.number &&
+      decoded.shape !== topDecoded.shape &&
+      decoded.number !== 14
+    ) return;
+
+    // ✅ PLAY CARD
+    g.hands[myIdx].splice(i, 1);
+
+    let nextTurn = g.players[oppIdx];
+
+    if (decoded.number === 2) g.pendingPick += 2;
+    else if (decoded.number === 8 || decoded.number === 1)
+      nextTurn = userId;
+    else if (decoded.number === 14) g.pendingPick += 1;
+
+    // WIN
+    if (g.hands[myIdx].length === 0) {
       await databases.updateDocument(
         DATABASE_ID,
         GAME_COLLECTION,
         gameId,
         {
+          ...encodeGame(g),
+          discard: card,
           status: "finished",
-          scores: JSON.stringify(scores),
-          winnerId
+          winnerId: userId
         }
       );
-
       return;
     }
-
-    const deck = createDeck();
 
     await databases.updateDocument(
       DATABASE_ID,
       GAME_COLLECTION,
       gameId,
       {
-        deck: JSON.stringify(deck),
-        discard: JSON.stringify([deck.pop()]),
-        hands: JSON.stringify([
-          deck.splice(0, 6),
-          deck.splice(0, 6)
-        ]),
-        scores: JSON.stringify(scores),
-        round: copy.round + 1,
-        turn: copy.players[0],
-        turnStartTime: new Date().toISOString()
+        ...encodeGame(g),
+        discard: card,
+        turn: nextTurn
       }
     );
+
+  } finally {
+    setProcessing(false);
   }
+}
+
+  // =========================
+  // DRAW MARKET (FIXED)
+  // =========================
+  async function drawMarket() {
+  if (processing) return;
+
+  const currentGame = gameRef.current;
+  if (!currentGame) return;
+
+  if (currentGame.turn !== userId) {
+    alert("⏳ Not your turn");
+    return;
+  }
+
+  setProcessing(true);
+
+  try {
+    const fresh = await databases.getDocument(
+      DATABASE_ID,
+      GAME_COLLECTION,
+      gameId
+    );
+
+    const g = parseGame(fresh);
+
+    const myIdx = g.players.indexOf(userId);
+    const oppIdx = myIdx === 0 ? 1 : 0;
+
+    let count = g.pendingPick || 1;
+
+    if (!g.deck.length) {
+      alert("No cards in market");
+      return;
+    }
+
+    for (let i = 0; i < count; i++) {
+      if (!g.deck.length) break;
+      g.hands[myIdx].push(g.deck.pop());
+    }
+
+    g.pendingPick = 0;
+
+    await databases.updateDocument(
+      DATABASE_ID,
+      GAME_COLLECTION,
+      gameId,
+      {
+        ...encodeGame(g),
+        turn: g.players[oppIdx]
+      }
+    );
+
+  } finally {
+    setProcessing(false);
+  }
+}
 
   // =========================
   // UI
   // =========================
-  if (!game) return <p>Loading game...</p>;
-
-  const playerIndex = game.players.indexOf(userId);
-  const hand = game.hands?.[playerIndex] || [];
-
   return (
-    <div style={{ padding: 20 }}>
-      <h2>🎮 Multiplayer WHOT</h2>
+    <div style={styles.bg}>
+      <div style={styles.box}>
+        <h2>WHOT GAME</h2>
 
-      <p>Round: {game.round}</p>
-      <p>Score: {game.scores.p1} - {game.scores.p2}</p>
+        {match && (
+          <div style={styles.info}>
+            💰 Stake: ₦{match.stake} | 🏆 Pot: ₦{match.pot}
+          </div>
+        )}
 
-      <p>
-        Turn: {game.turn === userId ? "YOUR TURN" : "Opponent"}
-      </p>
+        <p>
+          Turn: {game.turn === userId ? "🟢 You" : "⏳ Opponent"}
+        </p>
 
-      <h3>Top Card</h3>
-      <pre>{JSON.stringify(game.discard.at(-1))}</pre>
+        <div>
+          Opponent: {opponentHand.length} cards
+          <div style={styles.row}>
+            {opponentHand.map((_, i) => (
+              <div key={i} style={styles.back}></div>
+            ))}
+          </div>
+        </div>
 
-      <h3>Your Cards</h3>
-      {hand.map((c, i) => (
-        <button key={i} onClick={() => playCard(i)}>
-          {c.shape} {c.number}
-        </button>
-      ))}
+        <div style={styles.centerRow}>
+          {top ? (
+            <img src={drawCard(top)} style={{ width: 65 }} />
+          ) : (
+            <div style={styles.error}>No Card</div>
+          )}
 
-      <br /><br />
+          <button onClick={drawMarket}>
+            MARKET ({game.deck.length})
+          </button>
+        </div>
 
-      <button onClick={drawCard}>Draw Card</button>
+        <div style={styles.row}>
+          {hand.map((c, i) => {
+            const decoded = decodeCard(c);
+            if (!decoded) return <div key={i} style={styles.error}>?</div>;
 
-      {game.status === "finished" && (
-        <h1>
-          {game.winnerId === userId ? "🏆 YOU WIN" : "❌ YOU LOSE"}
-        </h1>
-      )}
+            return (
+              <img
+                key={i}
+                src={drawCard(decoded)}
+                style={{
+                  width: 65,
+                  cursor: "pointer",
+                  border:
+                    game.turn === userId
+                      ? "2px solid gold"
+                      : "2px solid transparent"
+                }}
+                onClick={() => playCard(i)}
+              />
+            );
+          })}
+        </div>
+
+        <button onClick={goHome}>Exit</button>
+      </div>
     </div>
   );
 }
+
+// =========================
+// STYLES
+// =========================
+const styles = {
+  bg: {
+    minHeight: "100vh",
+    background: "green",
+    display: "flex",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 10
+  },
+  box: {
+    width: "100%",
+    maxWidth: 420,
+    background: "#00000088",
+    padding: 10,
+    color: "#fff"
+  },
+  row: {
+    display: "flex",
+    gap: 5,
+    justifyContent: "center"
+  },
+  back: {
+    width: 30,
+    height: 45,
+    background: "#222",
+    border: "2px solid gold"
+  },
+  centerRow: {
+    display: "flex",
+    justifyContent: "center",
+    gap: 10,
+    margin: "10px 0"
+  },
+  info: {
+    background: "#111",
+    padding: 8,
+    marginBottom: 10
+  },
+  error: {
+    width: 65,
+    height: 90,
+    background: "red",
+    display: "flex",
+    justifyContent: "center",
+    alignItems: "center"
+  },
+  center: {
+    display: "flex",
+    justifyContent: "center",
+    alignItems: "center",
+    height: "100vh"
+  }
+};
