@@ -13,7 +13,12 @@ import {
 // =========================
 // COMPONENT
 // =========================
-export default function Dashboard({ goLobby, goWallet, logout }) {
+export default function Dashboard({
+  goLobby,
+  goWallet,
+  goTransactions,
+  logout
+}) {
   const [user, setUser] = useState(null);
   const [wallet, setWallet] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -66,31 +71,35 @@ export default function Dashboard({ goLobby, goWallet, logout }) {
     <div style={styles.container}>
       <h1 style={styles.logo}>🎮 Win9ja</h1>
 
-      <h2>Welcome, {user?.name || "Player"}</h2>
+      <h2 style={styles.welcome}>
+        Welcome, {user?.name || "Player"}
+      </h2>
 
       {/* WALLET BALANCE */}
       <div style={styles.card}>
         💰 Balance: ₦{Number(wallet?.balance || 0).toLocaleString()}
       </div>
 
-      {/* WALLET BUTTON */}
+      {/* WALLET */}
       <button
         style={styles.btn}
-        onClick={() => {
-          console.log("Go Wallet clicked");
-          goWallet && goWallet();
-        }}
+        onClick={() => goWallet?.()}
       >
         💳 Wallet
       </button>
 
-      {/* PLAY WHOT BUTTON */}
+      {/* TRANSACTIONS */}
+      <button
+        style={styles.txBtn}
+        onClick={() => goTransactions?.()}
+      >
+        📊 Transactions
+      </button>
+
+      {/* WHOT */}
       <button
         style={styles.btn}
-        onClick={() => {
-          console.log("Go Lobby clicked");
-          goLobby && goLobby();
-        }}
+        onClick={() => goLobby?.()}
       >
         🎲 Play WHOT
       </button>
@@ -103,10 +112,10 @@ export default function Dashboard({ goLobby, goWallet, logout }) {
         🚪 Logout
       </button>
 
-      {/* FUTURE GAMES */}
+      {/* COMING SOON */}
       <div style={styles.games}>
         <h3>🚀 Coming Soon</h3>
-        <p>Poker • Ludo • Blackjack</p>
+        <p>Poker • Blackjack • Dice</p>
       </div>
     </div>
   );
@@ -120,18 +129,22 @@ const styles = {
     textAlign: "center",
     padding: 20,
     color: "white",
-    background: "#0f172a",
+    background: "linear-gradient(135deg,#020617,#0f172a)",
     minHeight: "100vh"
   },
   logo: {
     color: "gold",
+    marginBottom: 10,
+    fontSize: 28
+  },
+  welcome: {
     marginBottom: 10
   },
   card: {
     background: "#111827",
     padding: 20,
     margin: "15px 0",
-    borderRadius: 10,
+    borderRadius: 12,
     fontSize: 18
   },
   btn: {
@@ -141,13 +154,25 @@ const styles = {
     marginTop: 10,
     background: "gold",
     border: "none",
-    borderRadius: 8,
+    borderRadius: 10,
     fontWeight: "bold",
     cursor: "pointer"
   },
+  txBtn: {
+    display: "block",
+    width: "100%",
+    padding: 12,
+    marginTop: 10,
+    background: "#38bdf8",
+    border: "none",
+    borderRadius: 10,
+    fontWeight: "bold",
+    cursor: "pointer",
+    color: "#000"
+  },
   games: {
-    marginTop: 25,
-    opacity: 0.7
+    marginTop: 30,
+    opacity: 0.6
   },
   loading: {
     minHeight: "100vh",
