@@ -201,6 +201,7 @@ export default function WhotGame({ gameId, goHome }) {
   const [game, setGame] = useState(null);
   const [match, setMatch] = useState(null);
   const [userId, setUserId] = useState(null);
+  const [showWin, setShowWin] = useState(false);
   const payoutRef = useRef(false);
 
   useEffect(() => {
@@ -224,7 +225,59 @@ export default function WhotGame({ gameId, goHome }) {
 
     const unsub = databases.client.subscribe(
       `databases.${DATABASE_ID}.collections.${GAME_COLLECTION}.documents.${gameId}`,
-      (res) => setGame(parseGame(res.payload))
+      async (res) => {
+        const parsed = parseGame(res.payload);
+        setGame(parsed);
+
+        if (parsed.status === "finished") {
+
+          if (parsed.winnerId === userId) {
+            setShowWin(true);
+            setTimeout(goHome, 3000);
+          } else {
+            setTimeout(goHome, 2500);
+          }
+
+          if (parsed.payoutDone || payoutRef.current) return;
+          payoutRef.current = true;
+
+          (async () => {
+            try {
+              const freshMatch = parsed.matchId
+                ? await databases.getDocument(DATABASE_ID, MATCH_COLLECTION, parsed.matchId)
+                : null;
+
+              const total = Number(freshMatch?.pot || 0);
+
+              const w = await databases.listDocuments(
+                DATABASE_ID,
+                WALLET_COLLECTION,
+                [Query.equal("userId", parsed.winnerId)]
+              );
+
+              if (w.documents.length) {
+                await databases.updateDocument(
+                  DATABASE_ID,
+                  WALLET_COLLECTION,
+                  w.documents[0].$id,
+                  {
+                    balance: Number(w.documents[0].balance || 0) + total
+                  }
+                );
+              }
+
+              await databases.updateDocument(
+                DATABASE_ID,
+                GAME_COLLECTION,
+                parsed.$id,
+                { payoutDone: true }
+              );
+            } catch (e) {
+              console.log("payout error", e);
+            }
+          })();
+        }
+      }
     );
 
     return () => unsub();
@@ -242,9 +295,6 @@ export default function WhotGame({ gameId, goHome }) {
   const myName = myIdx === 0 ? game.hostName : game.opponentName;
   const oppName = myIdx === 0 ? game.opponentName : game.hostName;
 
-  // =========================
-  // END ROUND
-  // =========================
   async function endRound(g, winnerIdx) {
     g.scores[winnerIdx]++;
 
@@ -267,16 +317,14 @@ export default function WhotGame({ gameId, goHome }) {
     await databases.updateDocument(DATABASE_ID, GAME_COLLECTION, gameId, encodeGame(g));
   }
 
-  // =========================
-  // PLAY CARD (FIXED)
-  // =========================
+  // ✅ FAST PLAY + HISTORY
   async function playCard(i) {
-    const g = parseGame(await databases.getDocument(DATABASE_ID, GAME_COLLECTION, gameId));
-
-    if (g.turn !== userId) {
+    if (game.turn !== userId) {
       beep(150);
       return;
     }
+
+    const g = { ...game };
 
     const card = g.hands[myIdx][i];
     const current = decodeCard(card);
@@ -286,7 +334,6 @@ export default function WhotGame({ gameId, goHome }) {
       beep(200, 400);
       g.history.push("🔴 MUST PLAY 2 OR DRAW");
       setGame({ ...g });
-      await databases.updateDocument(DATABASE_ID, GAME_COLLECTION, gameId, encodeGame(g));
       return;
     }
 
@@ -298,7 +345,6 @@ export default function WhotGame({ gameId, goHome }) {
       beep(120);
       g.history.push("🔴 INVALID MOVE");
       setGame({ ...g });
-      await databases.updateDocument(DATABASE_ID, GAME_COLLECTION, gameId, encodeGame(g));
       return;
     }
 
@@ -326,35 +372,27 @@ export default function WhotGame({ gameId, goHome }) {
       g.history.push("🛒 MARKET");
     }
 
+    setGame({ ...g, discard: card, turn: nextTurn });
+
     if (g.hands[myIdx].length === 0) {
       await endRound(g, myIdx);
       return;
     }
 
-    setGame({ ...g });
-
-    await databases.updateDocument(DATABASE_ID, GAME_COLLECTION, gameId, {
+    databases.updateDocument(DATABASE_ID, GAME_COLLECTION, gameId, {
       ...encodeGame(g),
       discard: card,
       turn: nextTurn
     });
   }
 
-  // =========================
-  // DRAW MARKET
-  // =========================
+  // ✅ FAST DRAW + HISTORY
   async function drawMarket() {
-    const g = parseGame(await databases.getDocument(DATABASE_ID, GAME_COLLECTION, gameId));
-    if (g.turn !== userId) return;
+    if (game.turn !== userId) return;
+
+    const g = { ...game };
 
     let count = g.pendingPick > 0 ? g.pendingPick : 1;
-
-    if (!g.deck.length) {
-      const winner =
-        g.hands[myIdx].length < g.hands[oppIdx].length ? myIdx : oppIdx;
-      await endRound(g, winner);
-      return;
-    }
 
     for (let i = 0; i < count; i++) {
       if (!g.deck.length) break;
@@ -364,9 +402,9 @@ export default function WhotGame({ gameId, goHome }) {
     g.pendingPick = 0;
     g.history.push(`📦 DRAW ${count}`);
 
-    setGame({ ...g });
+    setGame({ ...g, turn: g.players[oppIdx] });
 
-    await databases.updateDocument(DATABASE_ID, GAME_COLLECTION, gameId, {
+    databases.updateDocument(DATABASE_ID, GAME_COLLECTION, gameId, {
       ...encodeGame(g),
       turn: g.players[oppIdx]
     });
@@ -420,7 +458,23 @@ export default function WhotGame({ gameId, goHome }) {
           ))}
         </div>
 
-        {/* HISTORY */}
+        {showWin && (
+          <div style={{
+            position: "fixed",
+            top: "40%",
+            left: "50%",
+            transform: "translate(-50%, -50%)",
+            background: "gold",
+            color: "#000",
+            padding: 20,
+            borderRadius: 10,
+            fontWeight: "bold",
+            zIndex: 999
+          }}>
+            🎉 You Won ₦{match?.pot || 0}
+          </div>
+        )}
+
         <div style={styles.history}>
           {game.history.slice().reverse().map((h, i) => (
             <div key={i}>{h}</div>
@@ -433,9 +487,6 @@ export default function WhotGame({ gameId, goHome }) {
   );
 }
 
-// =========================
-// STYLES
-// =========================
 const styles = {
   bg: {
     minHeight: "100vh",
