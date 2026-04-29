@@ -16,6 +16,9 @@ import { lockFunds, unlockFunds } from "../lib/wallet";
 
 const GAME_COLLECTION = "games";
 
+// 🔴 YOUR ADMIN ID
+const ADMIN_ID = "69ef9fe863a02a7490b4";
+
 // =========================
 // CREATE DECK
 // =========================
@@ -104,7 +107,7 @@ export default function Lobby({ goGame, back }) {
 
         refresh(user.$id);
 
-        // 🔥 AUTO ENTER GAME
+        // AUTO ENTER GAME
         if (
           (m.hostId === user.$id || m.opponentId === user.$id) &&
           m.status === "matched" &&
@@ -113,7 +116,7 @@ export default function Lobby({ goGame, back }) {
           goGame(m.gameId, m.stake);
         }
 
-        // ✅ AUTO MARK FINISHED MATCH
+        // AUTO MARK FINISHED
         if (m.gameId) {
           try {
             const g = await databases.getDocument(
@@ -139,21 +142,71 @@ export default function Lobby({ goGame, back }) {
   }, [user]);
 
   async function refresh(userId) {
-    await loadMatches();
+    await loadMatches(userId);
     await loadActiveMatches(userId);
+    await autoRefund(userId);
+  }
+
+  // =========================
+  // AUTO REFUND (78 HOURS)
+  // =========================
+  async function autoRefund(userId) {
+    const res = await databases.listDocuments(
+      DATABASE_ID,
+      MATCH_COLLECTION
+    );
+
+    const now = Date.now();
+
+    for (let m of res.documents) {
+      if (
+        m.status === "waiting" &&
+        m.hostId === userId &&
+        m.createdAt &&
+        !m.refunded
+      ) {
+        const created = new Date(m.createdAt).getTime();
+        const diff = (now - created) / (1000 * 60 * 60);
+
+        if (diff >= 78) {
+          await unlockFunds(userId, m.stake);
+
+          await databases.updateDocument(
+            DATABASE_ID,
+            MATCH_COLLECTION,
+            m.$id,
+            {
+              status: "cancelled",
+              refunded: true
+            }
+          );
+        }
+      }
+    }
   }
 
   // =========================
   // LOAD MATCHES
   // =========================
-  async function loadMatches() {
+  async function loadMatches(userId) {
     const res = await databases.listDocuments(
       DATABASE_ID,
-      MATCH_COLLECTION,
-      [Query.equal("status", "waiting")]
+      MATCH_COLLECTION
     );
 
-    setMatches(res.documents);
+    const filtered = res.documents.filter((m) => {
+      // SHOW WAITING TO ALL EXCEPT HOST
+      if (m.status === "waiting") return m.hostId !== userId;
+
+      // SHOW MATCHED ONLY TO PLAYERS
+      if (m.status === "matched") {
+        return m.hostId === userId || m.opponentId === userId;
+      }
+
+      return false;
+    });
+
+    setMatches(filtered);
   }
 
   // =========================
@@ -166,9 +219,9 @@ export default function Lobby({ goGame, back }) {
     );
 
     const mine = res.documents.filter(
-      m =>
+      (m) =>
         (m.hostId === userId || m.opponentId === userId) &&
-        m.status !== "finished" // ❌ REMOVE FINISHED
+        m.status !== "cancelled"
     );
 
     setActiveMatches(mine);
@@ -182,6 +235,11 @@ export default function Lobby({ goGame, back }) {
     setLoading(true);
 
     try {
+      if (match.hostId === user.$id) {
+        alert("Cannot join your own match");
+        return;
+      }
+
       const fresh = await databases.getDocument(
         DATABASE_ID,
         MATCH_COLLECTION,
@@ -194,11 +252,34 @@ export default function Lobby({ goGame, back }) {
       }
 
       if ((wallet?.balance || 0) < fresh.stake) {
-        alert("No balance");
+        alert("Insufficient balance");
         return;
       }
 
+      // LOCK USER FUNDS
       await lockFunds(user.$id, fresh.stake);
+
+      // 🔥 ADMIN CUT
+      const adminCut = Math.floor(fresh.stake * 0.1);
+
+      // PAY ADMIN
+      const adminWallet = await databases.listDocuments(
+        DATABASE_ID,
+        WALLET_COLLECTION,
+        [Query.equal("userId", ADMIN_ID)]
+      );
+
+      if (adminWallet.documents.length) {
+        await databases.updateDocument(
+          DATABASE_ID,
+          WALLET_COLLECTION,
+          adminWallet.documents[0].$id,
+          {
+            balance:
+              Number(adminWallet.documents[0].balance || 0) + adminCut
+          }
+        );
+      }
 
       const updated = await databases.updateDocument(
         DATABASE_ID,
@@ -207,7 +288,8 @@ export default function Lobby({ goGame, back }) {
         {
           opponentId: user.$id,
           status: "matched",
-          pot: fresh.stake * 2
+          pot: fresh.stake * 2 - adminCut,
+          adminPaid: true
         }
       );
 
@@ -244,7 +326,7 @@ export default function Lobby({ goGame, back }) {
     }
 
     if ((wallet?.balance || 0) < amount) {
-      return alert("No balance");
+      return alert("Insufficient balance");
     }
 
     setLoading(true);
@@ -262,9 +344,14 @@ export default function Lobby({ goGame, back }) {
           stake: amount,
           pot: amount,
           status: "waiting",
-          gameId: ""
+          gameId: "",
+          adminPaid: false,
+          refunded: false,
+          createdAt: new Date().toISOString()
         }
       );
+
+      setStake("");
 
     } catch (err) {
       alert(err.message);
@@ -282,74 +369,59 @@ export default function Lobby({ goGame, back }) {
 
       {loading && <p style={styles.loading}>⚡ Processing...</p>}
 
-      {/* ACTIVE */}
       <h2 style={styles.section}>🔥 Your Matches</h2>
 
-      {activeMatches.length === 0 && (
-        <p style={styles.empty}>No active matches</p>
-      )}
-
-      {activeMatches.map(m => (
+      {activeMatches.map((m) => (
         <div key={m.$id} style={styles.card}>
           <div>
-            <p style={styles.amount}>₦{m.stake}</p>
-            <p style={styles.status}>{m.status}</p>
+            <p>₦{m.stake}</p>
+            <p>{m.status}</p>
           </div>
 
-          <button
-            style={styles.resumeBtn}
-            onClick={() => {
-              if (!m.gameId) {
-                alert("Game not ready");
-                return;
-              }
-              goGame(m.gameId, m.stake);
-            }}
-          >
-            ▶ Resume
-          </button>
+          {m.status === "finished" ? (
+            <button disabled style={styles.finishedBtn}>
+              ✅ Finished
+            </button>
+          ) : (
+            <button
+              style={styles.resumeBtn}
+              onClick={() => goGame(m.gameId, m.stake)}
+            >
+              ▶ Resume
+            </button>
+          )}
         </div>
       ))}
 
-      {/* AVAILABLE */}
       <h2 style={styles.section}>🎯 Available</h2>
 
-      {matches.length === 0 && (
-        <p style={styles.empty}>No matches available</p>
-      )}
-
-      {matches.map(m => (
+      {matches.map((m) => (
         <div key={m.$id} style={styles.card}>
-          <span style={styles.amount}>₦{m.stake}</span>
+          <span>₦{m.stake}</span>
 
-          <button
-            style={styles.joinBtn}
-            onClick={() => joinMatch(m)}
-          >
-            Join
-          </button>
+          {m.status === "waiting" && (
+            <button onClick={() => joinMatch(m)} style={styles.joinBtn}>
+              Join
+            </button>
+          )}
         </div>
       ))}
 
-      {/* CREATE */}
       <div style={styles.createBox}>
         <input
           type="number"
-          placeholder="Enter stake ₦"
+          placeholder="Stake ₦"
           value={stake}
-          onChange={e => setStake(e.target.value)}
+          onChange={(e) => setStake(e.target.value)}
           style={styles.input}
         />
 
-        <button
-          style={styles.createBtn}
-          onClick={createMatch}
-        >
+        <button onClick={createMatch} style={styles.createBtn}>
           Create Match
         </button>
       </div>
 
-      <button style={styles.back} onClick={back}>
+      <button onClick={back} style={styles.back}>
         ← Back
       </button>
     </div>
@@ -357,89 +429,30 @@ export default function Lobby({ goGame, back }) {
 }
 
 // =========================
-// STYLES (🔥 UPGRADED)
+// STYLES
 // =========================
 const styles = {
   container: {
     padding: 20,
-    minHeight: "100vh",
-    background: "linear-gradient(135deg,#020617,#0f172a)",
-    color: "#fff"
+    background: "#020617",
+    color: "#fff",
+    minHeight: "100vh"
   },
-  title: {
-    fontSize: 28,
-    fontWeight: "bold",
-    marginBottom: 10
-  },
-  section: {
-    marginTop: 25,
-    marginBottom: 10,
-    color: "#facc15"
-  },
-  loading: {
-    color: "#facc15"
-  },
-  empty: {
-    opacity: 0.6
-  },
+  title: { fontSize: 28, fontWeight: "bold" },
+  section: { marginTop: 20, color: "gold" },
+  loading: { color: "gold" },
   card: {
     background: "#111827",
     padding: 15,
     margin: "10px 0",
-    borderRadius: 12,
+    borderRadius: 10,
     display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    boxShadow: "0 4px 10px rgba(0,0,0,0.4)"
+    justifyContent: "space-between"
   },
-  amount: {
-    fontWeight: "bold",
-    fontSize: 16
-  },
-  status: {
-    fontSize: 12,
-    opacity: 0.7
-  },
-  joinBtn: {
-    background: "#facc15",
-    padding: "8px 14px",
-    borderRadius: 8,
-    border: "none",
-    fontWeight: "bold"
-  },
-  resumeBtn: {
-    background: "#22c55e",
-    padding: "8px 14px",
-    borderRadius: 8,
-    border: "none",
-    color: "#fff",
-    fontWeight: "bold"
-  },
-  createBox: {
-    marginTop: 25
-  },
-  input: {
-    width: "100%",
-    padding: 12,
-    marginBottom: 10,
-    borderRadius: 8,
-    border: "none"
-  },
-  createBtn: {
-    width: "100%",
-    padding: 12,
-    background: "#3b82f6",
-    border: "none",
-    borderRadius: 8,
-    color: "#fff",
-    fontWeight: "bold"
-  },
-  back: {
-    marginTop: 25,
-    padding: 10,
-    background: "#475569",
-    border: "none",
-    borderRadius: 8,
-    color: "#fff"
-  }
+  joinBtn: { background: "gold", padding: 8 },
+  resumeBtn: { background: "green", padding: 8, color: "#fff" },
+  finishedBtn: { background: "#444", padding: 8, color: "#fff" },
+  input: { width: "100%", padding: 10 },
+  createBtn: { width: "100%", padding: 10, background: "blue", color: "#fff" },
+  back: { marginTop: 20, padding: 10 }
 };
