@@ -2,13 +2,16 @@
 // IMPORTS
 // =========================
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom"; // 🔥 NEW
 import { account } from "../lib/appwrite";
 import { getWallet } from "../lib/wallet";
 
 // =========================
 // COMPONENT
 // =========================
-export default function Wallet({ back }) {
+export default function Wallet() {
+  const navigate = useNavigate(); // 🔥 NEW
+
   const [wallet, setWallet] = useState(null);
   const [loading, setLoading] = useState(true);
 
@@ -61,11 +64,20 @@ export default function Wallet({ back }) {
       </div>
 
       {/* ACTIONS */}
-      <button style={styles.btn}>➕ Deposit (coming soon)</button>
-      <button style={styles.btn}>➖ Withdraw (coming soon)</button>
+      <button type="button" style={styles.btn}>
+        ➕ Deposit (coming soon)
+      </button>
+
+      <button type="button" style={styles.btn}>
+        ➖ Withdraw (coming soon)
+      </button>
 
       {/* BACK */}
-      <button style={styles.back} onClick={back}>
+      <button
+        type="button"
+        style={styles.back}
+        onClick={() => navigate("/dashboard")} // 🔥 FIXED
+      >
         ⬅ Back
       </button>
     </div>
