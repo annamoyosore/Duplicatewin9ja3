@@ -61,7 +61,7 @@ function createDeck() {
 }
 
 // =========================
-// 🎴 DECODE
+// 🎴 DECODE + LABEL
 // =========================
 function decodeCard(str) {
   if (!str) return null;
@@ -80,7 +80,6 @@ function decodeCard(str) {
   };
 }
 
-// ✅ CARD LABEL (NEW)
 function cardLabel(cardStr) {
   const c = decodeCard(cardStr);
   if (!c) return "";
@@ -217,6 +216,7 @@ function encodeGame(g) {
 // COMPONENT
 // =========================
 export default function WhotGame({ gameId, goHome }) {
+
   const [game, setGame] = useState(null);
   const [match, setMatch] = useState(null);
   const [userId, setUserId] = useState(null);
@@ -233,7 +233,7 @@ export default function WhotGame({ gameId, goHome }) {
   }
 
   useEffect(() => {
-    account.get().then(u => setUserId(u.$id)).catch(() => {});
+    account.get().then(u => setUserId(u.$id));
   }, []);
 
   useEffect(() => {
@@ -267,12 +267,7 @@ export default function WhotGame({ gameId, goHome }) {
 
           if (payoutRef.current) return;
 
-          const fresh = await databases.getDocument(
-            DATABASE_ID,
-            GAME_COLLECTION,
-            parsed.$id
-          );
-
+          const fresh = await databases.getDocument(DATABASE_ID, GAME_COLLECTION, parsed.$id);
           if (fresh.payoutDone) return;
 
           payoutRef.current = true;
@@ -323,15 +318,6 @@ export default function WhotGame({ gameId, goHome }) {
               { payoutDone: true }
             );
 
-            if (parsed.matchId) {
-              await databases.updateDocument(
-                DATABASE_ID,
-                MATCH_COLLECTION,
-                parsed.matchId,
-                { status: "finished" }
-              );
-            }
-
           } catch (e) {
             console.log("payout error", e);
           }
@@ -359,14 +345,13 @@ export default function WhotGame({ gameId, goHome }) {
 
     g.scores[winnerIdx]++;
 
-    const p1 = g.scores[0];
-    const p2 = g.scores[1];
+    if (g.round >= 3) {
+      let finalWinner = g.scores[0] > g.scores[1] ? 0 : 1;
 
-    if (p1 >= 2 || p2 >= 2) {
       await databases.updateDocument(DATABASE_ID, GAME_COLLECTION, gameId, {
         ...encodeGame(g),
         status: "finished",
-        winnerId: g.players[winnerIdx]
+        winnerId: g.players[finalWinner]
       });
       return;
     }
@@ -407,40 +392,50 @@ export default function WhotGame({ gameId, goHome }) {
     }
 
     g.hands[myIdx].splice(i, 1);
-
     const label = cardLabel(card);
 
-    g.history = [...g.history, `👤 ${myName} → ${card}`].slice(-10);
+    g.history = [...g.history, `👤 ${myName} → ${label}`].slice(-10);
 
     let nextTurn = g.players[oppIdx];
 
     if (current.number === 2) {
       g.pendingPick += 2;
       g.history.push(`🔥 PICK ${g.pendingPick}`);
-g.history = g.history.slice(-10);
+    }
 
     if (current.number === 14) {
       g.pendingPick += 1;
-      g.history.push(`🟣 PICK 1 → ${oppName} must draw`);
+      g.history.push(`🟣 PICK 1 → ${oppName}`);
     }
 
     if (current.number === 1) {
       nextTurn = userId;
-      g.history.push(`🟢 HOLD ON → ${myName} plays again`);
+      g.history.push(`🟢 HOLD ON`);
     }
 
     if (current.number === 8) {
       nextTurn = userId;
-      g.history.push(`⛔ SUSPEND → ${oppName} skipped`);
+      g.history.push(`⛔ SUSPEND`);
     }
 
-    setGame({ ...g, discard: card, turn: nextTurn });
+    g.history = g.history.slice(-10);
 
     if (!g.hands[myIdx].length) {
       await endRound(g, myIdx);
       actionLock.current = false;
       return;
     }
+
+    if (g.deck.length === 0) {
+      const winnerIdx =
+        g.hands[myIdx].length < g.hands[oppIdx].length ? myIdx : oppIdx;
+
+      await endRound(g, winnerIdx);
+      actionLock.current = false;
+      return;
+    }
+
+    setGame({ ...g, discard: card, turn: nextTurn });
 
     await databases.updateDocument(DATABASE_ID, GAME_COLLECTION, gameId, {
       ...encodeGame(g),
@@ -467,7 +462,17 @@ g.history = g.history.slice(-10);
 
     g.pendingPick = 0;
 
-    g.history.push(`📦 ${myName} drew ${count} card${count > 1 ? "s" : ""}`);
+    g.history.push(`📦 ${myName} drew ${count}`);
+    g.history = g.history.slice(-10);
+
+    if (g.deck.length === 0) {
+      const winnerIdx =
+        g.hands[myIdx].length < g.hands[oppIdx].length ? myIdx : oppIdx;
+
+      await endRound(g, winnerIdx);
+      actionLock.current = false;
+      return;
+    }
 
     setGame({ ...g, turn: g.players[oppIdx] });
 
@@ -500,7 +505,7 @@ g.history = g.history.slice(-10);
         </div>
 
         <div style={styles.row}>
-          <span>Round {game.round}</span>
+          <span>Round {game.round} / 3</span>
           <span>{game.scores[0]} - {game.scores[1]}</span>
         </div>
 
@@ -574,7 +579,8 @@ const styles = {
   },
   row: {
     display: "flex",
-    justifyContent: "space-between"
+    justifyContent: "space-between",
+    marginBottom: 6
   },
   hand: {
     display: "flex",
@@ -590,7 +596,8 @@ const styles = {
   center: {
     display: "flex",
     justifyContent: "center",
-    gap: 10
+    gap: 10,
+    marginTop: 10
   },
   marketBtn: {
     background: "gold",
