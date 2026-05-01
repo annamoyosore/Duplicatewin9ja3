@@ -312,18 +312,24 @@ export default function WhotGame({ gameId, goHome }) {
             }
 
             await databases.updateDocument(
-              DATABASE_ID,
-              GAME_COLLECTION,
-              parsed.$id,
-              { payoutDone: true }
-            );
+  DATABASE_ID,
+  GAME_COLLECTION,
+  parsed.$id,
+  { payoutDone: true }
+);
 
-          } catch (e) {
-            console.log("payout error", e);
-          }
-        }
-      }
-    );
+if (parsed.matchId) {
+  await databases.updateDocument(
+    DATABASE_ID,
+    MATCH_COLLECTION,
+    parsed.matchId,
+    { status: "finished" }
+  );
+} // ✅ THIS WAS MISSING
+
+} catch (e) {
+  console.log("payout error", e);
+}
 
     return () => unsub();
   }, [gameId, userId]);
