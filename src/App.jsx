@@ -3,7 +3,7 @@
 // =========================
 import { useEffect, useState } from "react";
 import {
-  HashRouter,   // 🔥 CHANGED
+  HashRouter,
   Routes,
   Route,
   Navigate,
@@ -17,7 +17,12 @@ import Auth from "./pages/Auth";
 import Dashboard from "./pages/Dashboard";
 import Wallet from "./pages/Wallet";
 import Lobby from "./pages/Lobby";
+import Transactions from "./pages/Transactions";
 import WhotGame from "./WhotGame";
+import AdminDashboard from "./pages/aaa"; // ✅ ADMIN PAGE
+
+// 🔒 ADMIN ID
+const ADMIN_ID = "69ef9fe863a02a7490b4";
 
 // =========================
 // AUTH HOOK
@@ -37,6 +42,23 @@ function useAuth() {
 }
 
 // =========================
+// GET USER HOOK
+// =========================
+function useUser() {
+  const [user, setUser] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    account.get()
+      .then(setUser)
+      .catch(() => setUser(null))
+      .finally(() => setLoading(false));
+  }, []);
+
+  return { user, loading };
+}
+
+// =========================
 // PROTECTED ROUTE
 // =========================
 function ProtectedRoute({ children }) {
@@ -45,6 +67,26 @@ function ProtectedRoute({ children }) {
   if (loading) return <p style={{ color: "white" }}>Loading...</p>;
 
   return authed ? children : <Navigate to="/auth" replace />;
+}
+
+// =========================
+// ADMIN ROUTE
+// =========================
+function AdminRoute({ children }) {
+  const { user, loading } = useUser();
+
+  if (loading) return <p style={{ color: "white" }}>Loading...</p>;
+
+  // ❌ not logged in
+  if (!user) return <Navigate to="/auth" replace />;
+
+  // ❌ not admin
+  if (user.$id !== ADMIN_ID) {
+    return <Navigate to="/dashboard" replace />;
+  }
+
+  // ✅ admin
+  return children;
 }
 
 // =========================
@@ -59,7 +101,7 @@ function PublicRoute({ children }) {
 }
 
 // =========================
-// GAME WRAPPER
+// WHOT GAME WRAPPER
 // =========================
 function GameWrapper() {
   const { gameId, stake } = useParams();
@@ -101,6 +143,8 @@ function AppRoutes() {
             <Dashboard
               goLobby={() => navigate("/lobby")}
               goWallet={() => navigate("/wallet")}
+              goTransactions={() => navigate("/transactions")}
+              goAdmin={() => navigate("/admin")} // ✅ FIXED
               logout={async () => {
                 await account.deleteSession("current");
                 navigate("/auth");
@@ -116,6 +160,16 @@ function AppRoutes() {
         element={
           <ProtectedRoute>
             <Wallet />
+          </ProtectedRoute>
+        }
+      />
+
+      {/* TRANSACTIONS */}
+      <Route
+        path="/transactions"
+        element={
+          <ProtectedRoute>
+            <Transactions back={() => navigate("/dashboard")} />
           </ProtectedRoute>
         }
       />
@@ -145,6 +199,16 @@ function AppRoutes() {
         }
       />
 
+      {/* ✅ ADMIN PANEL */}
+      <Route
+        path="/admin"
+        element={
+          <AdminRoute>
+            <AdminDashboard back={() => navigate("/dashboard")} />
+          </AdminRoute>
+        }
+      />
+
       {/* DEFAULT */}
       <Route path="*" element={<Navigate to="/auth" replace />} />
 
@@ -157,7 +221,7 @@ function AppRoutes() {
 // =========================
 export default function App() {
   return (
-    <HashRouter> {/* 🔥 KEY FIX */}
+    <HashRouter>
       <AppRoutes />
     </HashRouter>
   );
