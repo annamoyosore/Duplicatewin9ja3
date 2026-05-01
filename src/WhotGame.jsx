@@ -27,7 +27,7 @@ function beep(freq = 200, duration = 200) {
 
     osc.start();
 
-    gain.gain.setValueAtTime(0.25, ctx.currentTime);
+    gain.gain.setValueAtTime(0.3, ctx.currentTime);
     gain.gain.exponentialRampToValueAtTime(
       0.001,
       ctx.currentTime + duration / 1000
@@ -61,7 +61,7 @@ function createDeck() {
 }
 
 // =========================
-// 🎴 HELPERS
+// 🎴 DECODE + LABEL
 // =========================
 function decodeCard(str) {
   if (!str) return null;
@@ -96,7 +96,86 @@ function cardLabel(cardStr) {
 }
 
 // =========================
-// 🎴 PARSE
+// 🎴 DRAW CARD
+// =========================
+const cache = new Map();
+
+function drawCard(card) {
+  if (!card) return null;
+
+  const key = `${card.shape}_${card.number}`;
+  if (cache.has(key)) return cache.get(key);
+
+  const c = document.createElement("canvas");
+  c.width = 70;
+  c.height = 100;
+  const ctx = c.getContext("2d");
+
+  ctx.fillStyle = "#fff";
+  ctx.fillRect(0, 0, 70, 100);
+
+  ctx.strokeStyle = "#e11d48";
+  ctx.lineWidth = 2;
+  ctx.strokeRect(2, 2, 66, 96);
+
+  ctx.fillStyle = "#e11d48";
+  ctx.font = "bold 14px Arial";
+  ctx.fillText(card.number, 6, 18);
+
+  const cx = 35, cy = 55;
+
+  if (card.shape === "circle") {
+    ctx.beginPath();
+    ctx.arc(cx, cy, 12, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  if (card.shape === "square") ctx.fillRect(cx - 12, cy - 12, 24, 24);
+
+  if (card.shape === "triangle") {
+    ctx.beginPath();
+    ctx.moveTo(cx, cy - 12);
+    ctx.lineTo(cx - 12, cy + 12);
+    ctx.lineTo(cx + 12, cy + 12);
+    ctx.fill();
+  }
+
+  if (card.shape === "star") {
+    ctx.font = "20px Arial";
+    ctx.fillText("★", cx - 8, cy + 8);
+  }
+
+  if (card.shape === "cross") {
+    ctx.fillRect(cx - 3, cy - 12, 6, 24);
+    ctx.fillRect(cx - 12, cy - 3, 24, 6);
+  }
+
+  const img = c.toDataURL();
+  cache.set(key, img);
+  return img;
+}
+
+function drawBack() {
+  const c = document.createElement("canvas");
+  c.width = 65;
+  c.height = 100;
+  const ctx = c.getContext("2d");
+
+  ctx.fillStyle = "#111";
+  ctx.fillRect(0, 0, 65, 100);
+
+  ctx.strokeStyle = "#fff";
+  ctx.strokeRect(2, 2, 61, 96);
+
+  ctx.fillStyle = "#fff";
+  ctx.font = "bold 20px Arial";
+  ctx.fillText("🂠", 18, 60);
+
+  return c.toDataURL();
+}
+
+// =========================
+// PARSE / ENCODE
 // =========================
 function parseGame(g) {
   return {
@@ -112,8 +191,24 @@ function parseGame(g) {
     round: Number(g.round || 1),
     status: g.status || "playing",
     payoutDone: Boolean(g.payoutDone),
+    hostName: g.hostName || "Player 1",
+    opponentName: g.opponentName || "Player 2",
     winnerId: g.winnerId || null,
     matchId: g.matchId || null
+  };
+}
+
+function encodeGame(g) {
+  return {
+    hands: g.hands.map(p => p.join(",")).join("|"),
+    deck: g.deck.join(","),
+    discard: g.discard || "",
+    turn: g.turn,
+    pendingPick: String(g.pendingPick),
+    history: (g.history || []).slice(-10).join("||"),
+    scores: g.scores.join(","),
+    round: String(g.round),
+    status: g.status
   };
 }
 
@@ -126,158 +221,325 @@ export default function WhotGame({ gameId, goHome }) {
   const [match, setMatch] = useState(null);
   const [userId, setUserId] = useState(null);
   const [showWin, setShowWin] = useState(false);
+  const [error, setError] = useState("");
 
   const payoutRef = useRef(false);
+  const actionLock = useRef(false);
+
+  function invalidMove(msg) {
+    beep(120, 300);
+    setError(msg);
+    setTimeout(() => setError(""), 1000);
+  }
 
   useEffect(() => {
     account.get().then(u => setUserId(u.$id));
   }, []);
 
-  useEffect(() => {
-    if (!gameId || !userId) return;
+useEffect(() => {
+  if (!gameId || !userId) return;
 
-    const load = async () => {
-      const g = await databases.getDocument(DATABASE_ID, GAME_COLLECTION, gameId);
-      setGame(parseGame(g));
+  const load = async () => {
+    const g = await databases.getDocument(DATABASE_ID, GAME_COLLECTION, gameId);
+    setGame(parseGame(g));
 
-      if (g.matchId) {
-        const m = await databases.getDocument(
+    if (g.matchId) {
+      const m = await databases.getDocument(
+        DATABASE_ID,
+        MATCH_COLLECTION,
+        g.matchId
+      );
+      setMatch(m);
+    }
+  };
+
+  load();
+
+  const unsub = databases.client.subscribe(
+    `databases.${DATABASE_ID}.collections.${GAME_COLLECTION}.documents.${gameId}`,
+    async (res) => {
+      const parsed = parseGame(res.payload);
+      setGame(parsed);
+
+      if (parsed.status === "finished") {
+        if (parsed.winnerId === userId) {
+          setShowWin(true);
+          setTimeout(goHome, 3000);
+        } else {
+          setTimeout(goHome, 2500);
+        }
+
+        if (payoutRef.current) return;
+
+        const fresh = await databases.getDocument(
           DATABASE_ID,
-          MATCH_COLLECTION,
-          g.matchId
+          GAME_COLLECTION,
+          parsed.$id
         );
-        setMatch(m);
-      }
-    };
 
-    load();
+        if (fresh.payoutDone) return;
 
-    const unsub = databases.client.subscribe(
-      `databases.${DATABASE_ID}.collections.${GAME_COLLECTION}.documents.${gameId}`,
-      async (res) => {
+        payoutRef.current = true;
 
-        const parsed = parseGame(res.payload);
-        setGame(parsed);
-
-        if (parsed.status === "finished") {
-
-          if (parsed.winnerId === userId) {
-            setShowWin(true);
-            setTimeout(goHome, 3000);
-          } else {
-            setTimeout(goHome, 2500);
-          }
-
-          // 🔒 prevent double payout
-          if (payoutRef.current) return;
-
-          const fresh = await databases.getDocument(
-            DATABASE_ID,
-            GAME_COLLECTION,
-            parsed.$id
-          );
-
-          if (fresh.payoutDone) return;
-
-          payoutRef.current = true;
-
-          try {
-            const m = parsed.matchId
-              ? await databases.getDocument(
-                  DATABASE_ID,
-                  MATCH_COLLECTION,
-                  parsed.matchId
-                )
-              : null;
-
-            const pot = Number(m?.pot || 0);
-
-            // =========================
-            // 💰 PAY ONLY WINNER
-            // =========================
-            const winnerWallet = await databases.listDocuments(
-              DATABASE_ID,
-              WALLET_COLLECTION,
-              [Query.equal("userId", parsed.winnerId)]
-            );
-
-            if (winnerWallet.documents.length) {
-              const w = winnerWallet.documents[0];
-
-              await databases.updateDocument(
-                DATABASE_ID,
-                WALLET_COLLECTION,
-                w.$id,
-                {
-                  balance: Number(w.balance || 0) + pot
-                }
-              );
-            }
-
-            // =========================
-            // 🔓 CLEAR LOCKED FOR EACH PLAYER
-            // =========================
-            for (let pid of parsed.players) {
-              const wallets = await databases.listDocuments(
-                DATABASE_ID,
-                WALLET_COLLECTION,
-                [Query.equal("userId", pid)]
-              );
-
-              if (wallets.documents.length) {
-                const w = wallets.documents[0];
-
-                await databases.updateDocument(
-                  DATABASE_ID,
-                  WALLET_COLLECTION,
-                  w.$id,
-                  {
-                    locked: 0 // 🔥 IMPORTANT FIX
-                  }
-                );
-              }
-            }
-
-            // =========================
-            // ✅ MARK COMPLETE
-            // =========================
-            await databases.updateDocument(
-              DATABASE_ID,
-              GAME_COLLECTION,
-              parsed.$id,
-              { payoutDone: true }
-            );
-
-            if (parsed.matchId) {
-              await databases.updateDocument(
+        try {
+          const m = parsed.matchId
+            ? await databases.getDocument(
                 DATABASE_ID,
                 MATCH_COLLECTION,
-                parsed.matchId,
-                { status: "finished" }
+                parsed.matchId
+              )
+            : null;
+
+          const total = Number(m?.pot || 0);
+
+          const w = await databases.listDocuments(
+            DATABASE_ID,
+            WALLET_COLLECTION,
+            [Query.equal("userId", parsed.winnerId)]
+          );
+
+          if (w.documents.length) {
+            await databases.updateDocument(
+              DATABASE_ID,
+              WALLET_COLLECTION,
+              w.documents[0].$id,
+              {
+                balance:
+                  Number(w.documents[0].balance || 0) + total
+              }
+            );
+          }
+
+          for (let pid of parsed.players) {
+            const wallets = await databases.listDocuments(
+              DATABASE_ID,
+              WALLET_COLLECTION,
+              [Query.equal("userId", pid)]
+            );
+
+            if (wallets.documents.length) {
+              await databases.updateDocument(
+                DATABASE_ID,
+                WALLET_COLLECTION,
+                wallets.documents[0].$id,
+                { locked: 0 }
               );
             }
-
-          } catch (e) {
-            console.log("payout error", e);
           }
+
+          // ✅ mark payout done
+          await databases.updateDocument(
+            DATABASE_ID,
+            GAME_COLLECTION,
+            parsed.$id,
+            { payoutDone: true }
+          );
+
+          // ✅ mark match finished
+          if (parsed.matchId) {
+            await databases.updateDocument(
+              DATABASE_ID,
+              MATCH_COLLECTION,
+              parsed.matchId,
+              { status: "finished" }
+            );
+          }
+
+        } catch (e) {
+          console.log("payout error", e);
         }
       }
-    );
+    }
+  );
 
-    return () => unsub();
+  // ✅ CORRECT PLACE (outside subscribe)
+  return () => unsub();
 
-  }, [gameId, userId]);
+}, [gameId, userId]);
+  if (!game || !userId) return <div>Loading...</div>;
 
-  if (!game) return <div>Loading...</div>;
+  const myIdx = game.players.indexOf(userId);
+  const oppIdx = myIdx === 0 ? 1 : 0;
+
+  const hand = game.hands[myIdx];
+  const oppCards = game.hands[oppIdx].length;
+  const top = game.discard ? decodeCard(game.discard) : null;
+
+  const myName = myIdx === 0 ? game.hostName : game.opponentName;
+  const oppName = myIdx === 0 ? game.opponentName : game.hostName;
+
+  async function endRound(g, winnerIdx) {
+    g = JSON.parse(JSON.stringify(g));
+
+    g.scores[winnerIdx]++;
+
+    if (g.round >= 3) {
+      let finalWinner = g.scores[0] > g.scores[1] ? 0 : 1;
+
+      await databases.updateDocument(DATABASE_ID, GAME_COLLECTION, gameId, {
+        ...encodeGame(g),
+        status: "finished",
+        winnerId: g.players[finalWinner]
+      });
+      return;
+    }
+
+    const deck = createDeck();
+    g.hands = [deck.splice(0, 6), deck.splice(0, 6)];
+    g.discard = deck.pop();
+    g.deck = deck;
+    g.pendingPick = 0;
+    g.round++;
+
+    await databases.updateDocument(DATABASE_ID, GAME_COLLECTION, gameId, encodeGame(g));
+  }
+
+  async function playCard(i) {
+    if (actionLock.current) return;
+    if (game.turn !== userId) return invalidMove("Not your turn");
+
+    actionLock.current = true;
+
+    const g = JSON.parse(JSON.stringify(game));
+    const card = g.hands[myIdx][i];
+    const current = decodeCard(card);
+    const topDecoded = decodeCard(g.discard);
+
+    if (g.pendingPick > 0 && ![2,14].includes(current.number)) {
+      actionLock.current = false;
+      return invalidMove("Respond with 2 or 14");
+    }
+
+    if (
+      current.number !== topDecoded.number &&
+      current.shape !== topDecoded.shape &&
+      current.number !== 14
+    ) {
+      actionLock.current = false;
+      return invalidMove("Wrong card");
+    }
+
+    g.hands[myIdx].splice(i, 1);
+    const label = cardLabel(card);
+
+    g.history = [...g.history, `👤 ${myName} → ${label}`].slice(-10);
+
+    let nextTurn = g.players[oppIdx];
+
+    if (current.number === 2) {
+      g.pendingPick += 2;
+      g.history.push(`🔥 PICK ${g.pendingPick}`);
+    }
+
+    if (current.number === 14) {
+      g.pendingPick += 1;
+      g.history.push(`🟣 PICK 1 → ${oppName}`);
+    }
+
+    if (current.number === 1) {
+      nextTurn = userId;
+      g.history.push(`🟢 HOLD ON`);
+    }
+
+    if (current.number === 8) {
+      nextTurn = userId;
+      g.history.push(`⛔ SUSPEND`);
+    }
+
+    g.history = g.history.slice(-10);
+
+    if (!g.hands[myIdx].length) {
+      await endRound(g, myIdx);
+      actionLock.current = false;
+      return;
+    }
+
+    if (g.deck.length === 0) {
+      const winnerIdx =
+        g.hands[myIdx].length < g.hands[oppIdx].length ? myIdx : oppIdx;
+
+      await endRound(g, winnerIdx);
+      actionLock.current = false;
+      return;
+    }
+
+    setGame({ ...g, discard: card, turn: nextTurn });
+
+    await databases.updateDocument(DATABASE_ID, GAME_COLLECTION, gameId, {
+      ...encodeGame(g),
+      discard: card,
+      turn: nextTurn
+    });
+
+    actionLock.current = false;
+  }
+
+  async function drawMarket() {
+    if (actionLock.current) return;
+    if (game.turn !== userId) return invalidMove("Wait your turn");
+
+    actionLock.current = true;
+
+    const g = JSON.parse(JSON.stringify(game));
+    let count = g.pendingPick > 0 ? g.pendingPick : 1;
+
+    for (let i = 0; i < count; i++) {
+      if (!g.deck.length) break;
+      g.hands[myIdx].push(g.deck.pop());
+    }
+
+    g.pendingPick = 0;
+
+    g.history.push(`📦 ${myName} drew ${count}`);
+    g.history = g.history.slice(-10);
+
+    if (g.deck.length === 0) {
+      const winnerIdx =
+        g.hands[myIdx].length < g.hands[oppIdx].length ? myIdx : oppIdx;
+
+      await endRound(g, winnerIdx);
+      actionLock.current = false;
+      return;
+    }
+
+    setGame({ ...g, turn: g.players[oppIdx] });
+
+    await databases.updateDocument(DATABASE_ID, GAME_COLLECTION, gameId, {
+      ...encodeGame(g),
+      turn: g.players[oppIdx]
+    });
+
+    actionLock.current = false;
+  }
 
   return (
     <div style={styles.bg}>
       <div style={styles.box}>
         <h2>🎮 WHOT GAME</h2>
 
+        {error && <div style={styles.error}>{error}</div>}
+
         <div style={styles.row}>
-          <span>Stake: ₦{match?.stake}</span>
-          <span>Pot: ₦{match?.pot}</span>
+          <span>{myName}</span>
+          <span>VS</span>
+          <span>{oppName}</span>
+        </div>
+
+        <div style={{ textAlign: "center" }}>
+          {Array.from({ length: oppCards }).map((_, i) => (
+            <img key={i} src={drawBack()} style={{ width: 40 }} />
+          ))}
+          <div>{oppName}: {oppCards}</div>
+        </div>
+
+        <div style={styles.row}>
+          <span>Round {game.round} / 3</span>
+          <span>{game.scores[0]} - {game.scores[1]}</span>
+        </div>
+
+        <div style={styles.row}>
+          <span>₦{match?.stake || 0}</span>
+          <span>🏦 ₦{match?.pot || 0}</span>
         </div>
 
         <p>
@@ -288,11 +550,35 @@ export default function WhotGame({ gameId, goHome }) {
             : "⏳ OPPONENT"}
         </p>
 
+        <div style={styles.center}>
+          {top && <img src={drawCard(top)} style={styles.card} />}
+          <button style={styles.marketBtn} onClick={drawMarket}>
+            🃏 {game.deck.length}
+          </button>
+        </div>
+
+        <div style={styles.hand}>
+          {hand.map((c, i) => (
+            <img
+              key={i}
+              src={drawCard(decodeCard(c))}
+              style={styles.card}
+              onClick={() => playCard(i)}
+            />
+          ))}
+        </div>
+
         {showWin && (
           <div style={styles.winBox}>
-            🎉 YOU WON ₦{match?.pot}
+            🎉 You Won ₦{match?.pot || 0}
           </div>
         )}
+
+        <div style={styles.history}>
+          {game.history.slice().reverse().map((h, i) => (
+            <div key={i}>{h}</div>
+          ))}
+        </div>
 
         <button onClick={goHome}>Exit</button>
       </div>
@@ -301,7 +587,7 @@ export default function WhotGame({ gameId, goHome }) {
 }
 
 // =========================
-// 🎨 STYLES (RESTORED)
+// STYLES
 // =========================
 const styles = {
   bg: {
@@ -324,6 +610,36 @@ const styles = {
     justifyContent: "space-between",
     marginBottom: 6
   },
+  hand: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: 6,
+    justifyContent: "center",
+    marginTop: 10
+  },
+  card: {
+    width: 65,
+    cursor: "pointer"
+  },
+  center: {
+    display: "flex",
+    justifyContent: "center",
+    gap: 10,
+    marginTop: 10
+  },
+  marketBtn: {
+    background: "gold",
+    padding: 10,
+    borderRadius: 8,
+    border: "none"
+  },
+  history: {
+    marginTop: 10,
+    maxHeight: 120,
+    overflow: "auto",
+    fontSize: 12,
+    color: "#ff4d4d"
+  },
   winBox: {
     position: "fixed",
     top: "40%",
@@ -335,5 +651,11 @@ const styles = {
     borderRadius: 10,
     fontWeight: "bold",
     zIndex: 999
+  },
+  error: {
+    background: "red",
+    padding: 6,
+    textAlign: "center",
+    marginBottom: 6
   }
 };
