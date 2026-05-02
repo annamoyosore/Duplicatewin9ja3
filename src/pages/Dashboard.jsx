@@ -58,9 +58,10 @@ function playPop() {
 // =========================
 export default function Dashboard({
   goLobby,
+  goCasino,   // ✅ NEW
   goWallet,
   goTransactions,
-  goAdmin,   // ✅ NEW
+  goAdmin,
   logout
 }) {
   const [user, setUser] = useState(null);
@@ -163,11 +164,20 @@ export default function Dashboard({
         📊 Transactions
       </button>
 
+      {/* 🎲 WHOT (UNCHANGED) */}
       <button style={styles.btn} onClick={() => goLobby?.()}>
         🎲 Play WHOT
       </button>
 
-      {/* ✅ ADMIN BUTTON (ONLY ADMIN SEES THIS) */}
+      {/* 🎰 CASINO (NEW) */}
+      <button
+        style={{ ...styles.btn, background: "#22c55e" }}
+        onClick={() => goCasino?.()}
+      >
+        🎰 Play Casino Jackpot
+      </button>
+
+      {/* ADMIN */}
       {user?.$id === ADMIN_ID && (
         <button
           style={{ ...styles.btn, background: "#9333ea" }}
