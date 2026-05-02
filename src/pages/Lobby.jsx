@@ -15,8 +15,6 @@ import {
 import { lockFunds, unlockFunds } from "../lib/wallet";
 
 const GAME_COLLECTION = "games";
-
-// 🔴 YOUR ADMIN ID
 const ADMIN_ID = "69ef9fe863a02a7490b4";
 
 // =========================
@@ -73,7 +71,7 @@ export default function Lobby({ goGame, back }) {
   const [stake, setStake] = useState("");
   const [user, setUser] = useState(null);
   const [wallet, setWallet] = useState(null);
-  const [loading, setLoading] = useState(false);
+  const [loadingMatchId, setLoadingMatchId] = useState(null);
 
   useEffect(() => {
     init();
@@ -100,45 +98,46 @@ export default function Lobby({ goGame, back }) {
   useEffect(() => {
     if (!user) return;
 
-    const unsub = databases.client.subscribe(
+    const unsubMatch = databases.client.subscribe(
       `databases.${DATABASE_ID}.collections.${MATCH_COLLECTION}.documents`,
+      () => refresh(user.$id)
+    );
+
+    const unsubGame = databases.client.subscribe(
+      `databases.${DATABASE_ID}.collections.${GAME_COLLECTION}.documents`,
       async (res) => {
-        const m = res.payload;
+        const g = res.payload;
 
-        refresh(user.$id);
-
-        // AUTO ENTER GAME
-        if (
-          (m.hostId === user.$id || m.opponentId === user.$id) &&
-          m.status === "matched" &&
-          m.gameId
-        ) {
-          goGame(m.gameId, m.stake);
-        }
-
-        // AUTO MARK FINISHED
-        if (m.gameId) {
+        // 🔥 SYNC GAME → MATCH (FINISHED)
+        if (g.status === "finished" && g.matchId) {
           try {
-            const g = await databases.getDocument(
+            const m = await databases.getDocument(
               DATABASE_ID,
-              GAME_COLLECTION,
-              m.gameId
+              MATCH_COLLECTION,
+              g.matchId
             );
 
-            if (g.status === "finished" && m.status !== "finished") {
+            if (m.status !== "finished") {
               await databases.updateDocument(
                 DATABASE_ID,
                 MATCH_COLLECTION,
-                m.$id,
+                g.matchId,
                 { status: "finished" }
               );
             }
-          } catch {}
+          } catch (e) {
+            console.log("match sync error", e);
+          }
         }
+
+        refresh(user.$id);
       }
     );
 
-    return () => unsub();
+    return () => {
+      unsubMatch();
+      unsubGame();
+    };
   }, [user]);
 
   async function refresh(userId) {
@@ -148,7 +147,7 @@ export default function Lobby({ goGame, back }) {
   }
 
   // =========================
-  // AUTO REFUND (78 HOURS)
+  // AUTO REFUND
   // =========================
   async function autoRefund(userId) {
     const res = await databases.listDocuments(
@@ -186,31 +185,27 @@ export default function Lobby({ goGame, back }) {
   }
 
   // =========================
-  // LOAD MATCHES
+  // LOAD AVAILABLE MATCHES
   // =========================
   async function loadMatches(userId) {
     const res = await databases.listDocuments(
       DATABASE_ID,
-      MATCH_COLLECTION
+      MATCH_COLLECTION,
+      [
+        Query.equal("status", "waiting"),
+        Query.isNull("opponentId")
+      ]
     );
 
-    const filtered = res.documents.filter((m) => {
-      // SHOW WAITING TO ALL EXCEPT HOST
-      if (m.status === "waiting") return m.hostId !== userId;
-
-      // SHOW MATCHED ONLY TO PLAYERS
-      if (m.status === "matched") {
-        return m.hostId === userId || m.opponentId === userId;
-      }
-
-      return false;
-    });
+    const filtered = res.documents.filter(
+      (m) => m.hostId !== userId
+    );
 
     setMatches(filtered);
   }
 
   // =========================
-  // ACTIVE MATCHES
+  // LOAD ACTIVE + FINISHED MATCHES ✅ FIXED
   // =========================
   async function loadActiveMatches(userId) {
     const res = await databases.listDocuments(
@@ -221,7 +216,7 @@ export default function Lobby({ goGame, back }) {
     const mine = res.documents.filter(
       (m) =>
         (m.hostId === userId || m.opponentId === userId) &&
-        m.status !== "cancelled"
+        m.status !== "cancelled" // ✅ include finished now
     );
 
     setActiveMatches(mine);
@@ -231,55 +226,39 @@ export default function Lobby({ goGame, back }) {
   // JOIN MATCH
   // =========================
   async function joinMatch(match) {
-    if (loading) return;
-    setLoading(true);
+    if (loadingMatchId) return;
+
+    // ❌ BLOCK SELF JOIN
+    if (match.hostId === user.$id) {
+      alert("You cannot join your own match");
+      return;
+    }
+
+    setLoadingMatchId(match.$id);
 
     try {
-      if (match.hostId === user.$id) {
-        alert("Cannot join your own match");
-        return;
-      }
-
       const fresh = await databases.getDocument(
         DATABASE_ID,
         MATCH_COLLECTION,
         match.$id
       );
 
-      if (fresh.opponentId) {
-        alert("Already taken");
-        return;
+      // ❌ BACKEND SAFETY
+      if (fresh.hostId === user.$id) {
+        throw new Error("Cannot join your own match");
+      }
+
+      if (fresh.status !== "waiting" || fresh.opponentId) {
+        throw new Error("Match already taken");
       }
 
       if ((wallet?.balance || 0) < fresh.stake) {
-        alert("Insufficient balance");
-        return;
+        throw new Error("Insufficient balance");
       }
 
-      // LOCK USER FUNDS
       await lockFunds(user.$id, fresh.stake);
 
-      // 🔥 ADMIN CUT
       const adminCut = Math.floor(fresh.stake * 0.1);
-
-      // PAY ADMIN
-      const adminWallet = await databases.listDocuments(
-        DATABASE_ID,
-        WALLET_COLLECTION,
-        [Query.equal("userId", ADMIN_ID)]
-      );
-
-      if (adminWallet.documents.length) {
-        await databases.updateDocument(
-          DATABASE_ID,
-          WALLET_COLLECTION,
-          adminWallet.documents[0].$id,
-          {
-            balance:
-              Number(adminWallet.documents[0].balance || 0) + adminCut
-          }
-        );
-      }
 
       const updated = await databases.updateDocument(
         DATABASE_ID,
@@ -292,6 +271,8 @@ export default function Lobby({ goGame, back }) {
           adminPaid: true
         }
       );
+
+      setMatches((prev) => prev.filter((m) => m.$id !== fresh.$id));
 
       const game = await createGame(updated, user.$id);
 
@@ -312,7 +293,7 @@ export default function Lobby({ goGame, back }) {
       } catch {}
     }
 
-    setLoading(false);
+    setLoadingMatchId(null);
   }
 
   // =========================
@@ -328,8 +309,6 @@ export default function Lobby({ goGame, back }) {
     if ((wallet?.balance || 0) < amount) {
       return alert("Insufficient balance");
     }
-
-    setLoading(true);
 
     try {
       await lockFunds(user.$id, amount);
@@ -356,8 +335,6 @@ export default function Lobby({ goGame, back }) {
     } catch (err) {
       alert(err.message);
     }
-
-    setLoading(false);
   }
 
   // =========================
@@ -366,8 +343,6 @@ export default function Lobby({ goGame, back }) {
   return (
     <div style={styles.container}>
       <h1 style={styles.title}>🎮 Game Lobby</h1>
-
-      {loading && <p style={styles.loading}>⚡ Processing...</p>}
 
       <h2 style={styles.section}>🔥 Your Matches</h2>
 
@@ -379,7 +354,16 @@ export default function Lobby({ goGame, back }) {
           </div>
 
           {m.status === "finished" ? (
-            <button disabled style={styles.finishedBtn}>
+            <button
+              disabled
+              style={{
+                background: "#16a34a",
+                color: "#fff",
+                padding: 8,
+                borderRadius: 6,
+                fontWeight: "bold"
+              }}
+            >
               ✅ Finished
             </button>
           ) : (
@@ -399,11 +383,13 @@ export default function Lobby({ goGame, back }) {
         <div key={m.$id} style={styles.card}>
           <span>₦{m.stake}</span>
 
-          {m.status === "waiting" && (
-            <button onClick={() => joinMatch(m)} style={styles.joinBtn}>
-              Join
-            </button>
-          )}
+          <button
+            onClick={() => joinMatch(m)}
+            style={styles.joinBtn}
+            disabled={loadingMatchId === m.$id}
+          >
+            {loadingMatchId === m.$id ? "Joining..." : "Join"}
+          </button>
         </div>
       ))}
 
@@ -440,7 +426,6 @@ const styles = {
   },
   title: { fontSize: 28, fontWeight: "bold" },
   section: { marginTop: 20, color: "gold" },
-  loading: { color: "gold" },
   card: {
     background: "#111827",
     padding: 15,
@@ -451,7 +436,6 @@ const styles = {
   },
   joinBtn: { background: "gold", padding: 8 },
   resumeBtn: { background: "green", padding: 8, color: "#fff" },
-  finishedBtn: { background: "#444", padding: 8, color: "#fff" },
   input: { width: "100%", padding: 10 },
   createBtn: { width: "100%", padding: 10, background: "blue", color: "#fff" },
   back: { marginTop: 20, padding: 10 }
