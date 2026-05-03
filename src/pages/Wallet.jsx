@@ -5,7 +5,9 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { account, databases, DATABASE_ID } from "../lib/appwrite";
 import { getWallet } from "../lib/wallet";
-import { ID } from "appwrite";
+import { ID, Query } from "appwrite";
+
+const PROMO_COLLECTION = "promocodes";
 
 // =========================
 // COMPONENT
@@ -15,6 +17,8 @@ export default function Wallet() {
 
   const [wallet, setWallet] = useState(null);
   const [loading, setLoading] = useState(true);
+
+  const [promo, setPromo] = useState(null);
 
   // Deposit states
   const [showDeposit, setShowDeposit] = useState(false);
@@ -31,7 +35,7 @@ export default function Wallet() {
   const [processing, setProcessing] = useState(false);
 
   // =========================
-  // LOAD WALLET
+  // LOAD WALLET + PROMO
   // =========================
   useEffect(() => {
     load();
@@ -42,11 +46,78 @@ export default function Wallet() {
       const user = await account.get();
       const w = await getWallet(user.$id);
       setWallet(w);
+
+      // Load promo
+      const res = await databases.listDocuments(
+        DATABASE_ID,
+        PROMO_COLLECTION,
+        [Query.equal("ownerId", user.$id)]
+      );
+
+      if (res.documents.length > 0) {
+        setPromo(res.documents[0]);
+      }
+
     } catch (err) {
       console.error("Wallet load error:", err);
     } finally {
       setLoading(false);
     }
+  }
+
+  // =========================
+  // CREATE PROMO
+  // =========================
+  function generateCode(name) {
+    const base = (name || "USER")
+      .replace(/\s+/g, "")
+      .toUpperCase()
+      .slice(0, 5);
+
+    return base + Math.floor(1000 + Math.random() * 9000);
+  }
+
+  async function createPromo() {
+    try {
+      const user = await account.get();
+      const code = generateCode(wallet?.name);
+
+      const doc = await databases.createDocument(
+        DATABASE_ID,
+        PROMO_COLLECTION,
+        ID.unique(),
+        {
+          code,
+          ownerId: user.$id,
+          usedCount: 0,
+          isActive: true
+        }
+      );
+
+      setPromo(doc);
+      alert("Promo code created ✅");
+
+    } catch (err) {
+      alert(err.message);
+    }
+  }
+
+  function copyCode() {
+    navigator.clipboard.writeText(promo.code);
+    alert("Copied ✅");
+  }
+
+  function copyInvite() {
+    if (!promo?.code) return alert("Generate code first");
+
+    const text = `Join Win9ja 🎮
+
+Use my promo code: ${promo.code}
+
+https://win9jalife.vercel.app`;
+
+    navigator.clipboard.writeText(text);
+    alert("Invite copied ✅");
   }
 
   // =========================
@@ -168,7 +239,26 @@ export default function Wallet() {
   // =========================
   return (
     <div style={styles.container}>
-      <h1>💳 Wallet</h1>
+      
+      {/* HEADER WITH PROMO */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <h1>💳 Wallet</h1>
+
+        {promo ? (
+          <div style={{ display: "flex", gap: 5, alignItems: "center" }}>
+            <span style={{ fontSize: 12 }}>{promo.code}</span>
+            <button onClick={copyCode}>📋</button>
+          </div>
+        ) : (
+          <button onClick={createPromo}>+ Code</button>
+        )}
+      </div>
+
+      {promo && (
+        <p style={{ fontSize: 12, color: "#9ca3af" }}>
+          👥 {promo.usedCount || 0} users joined
+        </p>
+      )}
 
       <div style={styles.card}>
         <p>💰 Balance: ₦{Number(wallet?.balance || 0).toLocaleString()}</p>
@@ -182,6 +272,11 @@ export default function Wallet() {
 
       <button style={styles.btn} onClick={() => setShowWithdraw(true)}>
         ➖ Withdraw
+      </button>
+
+      {/* COPY INVITE */}
+      <button style={styles.btn} onClick={copyInvite}>
+        📋 Copy Invite Text
       </button>
 
       {/* ================= DEPOSIT MODAL ================= */}
@@ -283,7 +378,7 @@ export default function Wallet() {
         ⬅ Back
       </button>
 
-      {/* WHATSAPP */}
+      {/* WHATSAPP (UNCHANGED POSITION) */}
       <a
         href="https://chat.whatsapp.com/JX0vmuEcEUvLeYCXVIBn1L?mode=gi_t"
         target="_blank"
@@ -295,90 +390,3 @@ export default function Wallet() {
     </div>
   );
 }
-
-// =========================
-// STYLES
-// =========================
-const styles = {
-  container: {
-    textAlign: "center",
-    padding: 20,
-    paddingBottom: 80,
-    background: "#0f172a",
-    color: "white",
-    minHeight: "100vh"
-  },
-
-  card: {
-    padding: 20,
-    background: "#111827",
-    borderRadius: 10,
-    marginBottom: 20,
-    fontSize: 16
-  },
-
-  btn: {
-    width: "100%",
-    padding: 12,
-    marginTop: 10,
-    background: "gold",
-    border: "none",
-    borderRadius: 8,
-    fontWeight: "bold",
-    cursor: "pointer"
-  },
-
-  back: {
-    marginTop: 20,
-    padding: 10,
-    background: "#475569",
-    border: "none",
-    borderRadius: 8,
-    color: "#fff"
-  },
-
-  modal: {
-    position: "fixed",
-    top: "50%",
-    left: "50%",
-    transform: "translate(-50%, -50%)",
-    background: "#111827",
-    padding: 20,
-    borderRadius: 10,
-    width: "85%",
-    maxWidth: 320,
-    display: "flex",
-    flexDirection: "column",
-    gap: 10
-  },
-
-  input: {
-    width: "100%",
-    padding: 10,
-    borderRadius: 6,
-    border: "none"
-  },
-
-  cancel: {
-    padding: 10,
-    background: "#ef4444",
-    border: "none",
-    borderRadius: 6,
-    color: "#fff"
-  },
-
-  whatsapp: {
-    position: "fixed",
-    bottom: 0,
-    left: 0,
-    width: "100%",
-    padding: 14,
-    background: "linear-gradient(135deg, #25D366, #128C7E)",
-    color: "#fff",
-    textAlign: "center",
-    fontWeight: "bold",
-    textDecoration: "none",
-    zIndex: 999,
-    boxShadow: "0 -2px 10px rgba(0,0,0,0.5)"
-  }
-};
