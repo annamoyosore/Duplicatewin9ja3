@@ -93,6 +93,59 @@ export default function Lobby({ goGame, back }) {
   }
 
   // =========================
+  // 🔴 CANCEL MATCH
+  // =========================
+  async function cancelMatch(match) {
+    if (loadingMatchId) return;
+
+    // Only host can cancel
+    if (match.hostId !== user.$id) {
+      return alert("Only host can cancel");
+    }
+
+    // Only if no one joined yet
+    if (match.opponentId) {
+      return alert("Cannot cancel, opponent already joined");
+    }
+
+    setLoadingMatchId(match.$id);
+
+    try {
+      const fresh = await databases.getDocument(
+        DATABASE_ID,
+        MATCH_COLLECTION,
+        match.$id
+      );
+
+      if (fresh.status !== "waiting") {
+        throw new Error("Match already started");
+      }
+
+      // 💰 REFUND
+      await unlockFunds(user.$id, fresh.stake);
+
+      // ❌ CANCEL MATCH
+      await databases.updateDocument(
+        DATABASE_ID,
+        MATCH_COLLECTION,
+        fresh.$id,
+        {
+          status: "cancelled",
+          refunded: true
+        }
+      );
+
+      // 🔄 REFRESH UI
+      refresh(user.$id);
+
+    } catch (err) {
+      alert(err.message);
+    }
+
+    setLoadingMatchId(null);
+  }
+
+  // =========================
   // REALTIME
   // =========================
   useEffect(() => {
@@ -108,7 +161,6 @@ export default function Lobby({ goGame, back }) {
       async (res) => {
         const g = res.payload;
 
-        // 🔥 SYNC GAME → MATCH (FINISHED)
         if (g.status === "finished" && g.matchId) {
           try {
             const m = await databases.getDocument(
@@ -125,9 +177,7 @@ export default function Lobby({ goGame, back }) {
                 { status: "finished" }
               );
             }
-          } catch (e) {
-            console.log("match sync error", e);
-          }
+          } catch {}
         }
 
         refresh(user.$id);
@@ -143,49 +193,10 @@ export default function Lobby({ goGame, back }) {
   async function refresh(userId) {
     await loadMatches(userId);
     await loadActiveMatches(userId);
-    await autoRefund(userId);
   }
 
   // =========================
-  // AUTO REFUND
-  // =========================
-  async function autoRefund(userId) {
-    const res = await databases.listDocuments(
-      DATABASE_ID,
-      MATCH_COLLECTION
-    );
-
-    const now = Date.now();
-
-    for (let m of res.documents) {
-      if (
-        m.status === "waiting" &&
-        m.hostId === userId &&
-        m.createdAt &&
-        !m.refunded
-      ) {
-        const created = new Date(m.createdAt).getTime();
-        const diff = (now - created) / (1000 * 60 * 60);
-
-        if (diff >= 78) {
-          await unlockFunds(userId, m.stake);
-
-          await databases.updateDocument(
-            DATABASE_ID,
-            MATCH_COLLECTION,
-            m.$id,
-            {
-              status: "cancelled",
-              refunded: true
-            }
-          );
-        }
-      }
-    }
-  }
-
-  // =========================
-  // LOAD AVAILABLE MATCHES
+  // LOAD MATCHES
   // =========================
   async function loadMatches(userId) {
     const res = await databases.listDocuments(
@@ -204,9 +215,6 @@ export default function Lobby({ goGame, back }) {
     setMatches(filtered);
   }
 
-  // =========================
-  // LOAD ACTIVE + FINISHED MATCHES ✅ FIXED
-  // =========================
   async function loadActiveMatches(userId) {
     const res = await databases.listDocuments(
       DATABASE_ID,
@@ -216,7 +224,7 @@ export default function Lobby({ goGame, back }) {
     const mine = res.documents.filter(
       (m) =>
         (m.hostId === userId || m.opponentId === userId) &&
-        m.status !== "cancelled" // ✅ include finished now
+        m.status !== "cancelled"
     );
 
     setActiveMatches(mine);
@@ -228,10 +236,8 @@ export default function Lobby({ goGame, back }) {
   async function joinMatch(match) {
     if (loadingMatchId) return;
 
-    // ❌ BLOCK SELF JOIN
     if (match.hostId === user.$id) {
-      alert("You cannot join your own match");
-      return;
+      return alert("You cannot join your own match");
     }
 
     setLoadingMatchId(match.$id);
@@ -242,11 +248,6 @@ export default function Lobby({ goGame, back }) {
         MATCH_COLLECTION,
         match.$id
       );
-
-      // ❌ BACKEND SAFETY
-      if (fresh.hostId === user.$id) {
-        throw new Error("Cannot join your own match");
-      }
 
       if (fresh.status !== "waiting" || fresh.opponentId) {
         throw new Error("Match already taken");
@@ -272,8 +273,6 @@ export default function Lobby({ goGame, back }) {
         }
       );
 
-      setMatches((prev) => prev.filter((m) => m.$id !== fresh.$id));
-
       const game = await createGame(updated, user.$id);
 
       await databases.updateDocument(
@@ -287,10 +286,6 @@ export default function Lobby({ goGame, back }) {
 
     } catch (err) {
       alert(err.message);
-
-      try {
-        await unlockFunds(user.$id, match.stake);
-      } catch {}
     }
 
     setLoadingMatchId(null);
@@ -353,17 +348,17 @@ export default function Lobby({ goGame, back }) {
             <p>{m.status}</p>
           </div>
 
-          {m.status === "finished" ? (
+          {/* ✅ CANCEL BUTTON */}
+          {m.status === "waiting" && !m.opponentId && m.hostId === user.$id ? (
             <button
-              disabled
-              style={{
-                background: "#16a34a",
-                color: "#fff",
-                padding: 8,
-                borderRadius: 6,
-                fontWeight: "bold"
-              }}
+              style={styles.cancelBtn}
+              onClick={() => cancelMatch(m)}
+              disabled={loadingMatchId === m.$id}
             >
+              {loadingMatchId === m.$id ? "Cancelling..." : "❌ Cancel"}
+            </button>
+          ) : m.status === "finished" ? (
+            <button disabled style={styles.finishedBtn}>
               ✅ Finished
             </button>
           ) : (
@@ -436,6 +431,8 @@ const styles = {
   },
   joinBtn: { background: "gold", padding: 8 },
   resumeBtn: { background: "green", padding: 8, color: "#fff" },
+  cancelBtn: { background: "#ef4444", padding: 8, color: "#fff" },
+  finishedBtn: { background: "#16a34a", padding: 8, color: "#fff" },
   input: { width: "100%", padding: 10 },
   createBtn: { width: "100%", padding: 10, background: "blue", color: "#fff" },
   back: { marginTop: 20, padding: 10 }
