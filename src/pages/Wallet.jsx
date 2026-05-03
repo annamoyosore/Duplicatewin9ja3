@@ -55,8 +55,8 @@ export default function Wallet() {
   async function makeDeposit() {
     if (processing) return;
 
-    if (!amount || Number(amount) < 100) {
-      return alert("Minimum deposit ₦100");
+    if (!amount || Number(amount) < 200) {
+      return alert("Minimum deposit ₦200");
     }
 
     if (!name) {
@@ -83,7 +83,6 @@ export default function Wallet() {
         }
       );
 
-      // 🔗 Redirect to Flutterwave
       window.location.href = `https://flutterwave.com/pay/qiattof2hy2w`;
 
     } catch (err) {
@@ -99,8 +98,8 @@ export default function Wallet() {
   async function requestWithdraw() {
     if (processing) return;
 
-    if (!withdrawAmount || Number(withdrawAmount) < 100) {
-      return alert("Minimum withdrawal ₦100");
+    if (!withdrawAmount || Number(withdrawAmount) < 1500) {
+      return alert("Minimum withdrawal ₦1500");
     }
 
     if (Number(withdrawAmount) > (wallet?.balance || 0)) {
@@ -139,7 +138,6 @@ export default function Wallet() {
 
       alert("Withdrawal request sent");
 
-      // reset form
       setShowWithdraw(false);
       setWithdrawAmount("");
       setBank("");
@@ -192,12 +190,18 @@ export default function Wallet() {
           <h3>Deposit</h3>
 
           <input
-            placeholder="Amount ₦"
+            placeholder="Min ₦200"
             type="number"
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
             style={styles.input}
           />
+
+          {amount && Number(amount) < 200 && (
+            <p style={{ color: "#ef4444", fontSize: 12 }}>
+              Minimum deposit is ₦200
+            </p>
+          )}
 
           <input
             placeholder="Full Name"
@@ -206,7 +210,21 @@ export default function Wallet() {
             style={styles.input}
           />
 
-          <button style={styles.btn} onClick={makeDeposit} disabled={processing}>
+          <input
+            placeholder="Promo Code (Coming Soon)"
+            disabled
+            style={{
+              ...styles.input,
+              opacity: 0.6,
+              cursor: "not-allowed"
+            }}
+          />
+
+          <button
+            style={styles.btn}
+            onClick={makeDeposit}
+            disabled={processing || !amount || Number(amount) < 200}
+          >
             Make Payment
           </button>
 
@@ -222,7 +240,7 @@ export default function Wallet() {
           <h3>Withdraw</h3>
 
           <input
-            placeholder="Amount ₦"
+            placeholder="Min ₦1500"
             type="number"
             value={withdrawAmount}
             onChange={(e) => setWithdrawAmount(e.target.value)}
@@ -264,6 +282,16 @@ export default function Wallet() {
       <button style={styles.back} onClick={() => navigate("/dashboard")}>
         ⬅ Back
       </button>
+
+      {/* WHATSAPP */}
+      <a
+        href="https://chat.whatsapp.com/JX0vmuEcEUvLeYCXVIBn1L?mode=gi_t"
+        target="_blank"
+        rel="noreferrer"
+        style={styles.whatsapp}
+      >
+        💬 Join WhatsApp Updates Group
+      </a>
     </div>
   );
 }
@@ -275,6 +303,7 @@ const styles = {
   container: {
     textAlign: "center",
     padding: 20,
+    paddingBottom: 80,
     background: "#0f172a",
     color: "white",
     minHeight: "100vh"
@@ -336,5 +365,20 @@ const styles = {
     border: "none",
     borderRadius: 6,
     color: "#fff"
+  },
+
+  whatsapp: {
+    position: "fixed",
+    bottom: 0,
+    left: 0,
+    width: "100%",
+    padding: 14,
+    background: "linear-gradient(135deg, #25D366, #128C7E)",
+    color: "#fff",
+    textAlign: "center",
+    fontWeight: "bold",
+    textDecoration: "none",
+    zIndex: 999,
+    boxShadow: "0 -2px 10px rgba(0,0,0,0.5)"
   }
 };
