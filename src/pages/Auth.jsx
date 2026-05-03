@@ -14,15 +14,30 @@ export default function Auth({ onLogin }) {
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
 
-  async function ensureNoSession() {
+  // =========================
+  // CHECK ACTIVE SESSION
+  // =========================
+  async function hasActiveSession() {
     try {
-      const sessions = await account.listSessions();
-      for (const s of sessions.sessions) {
-        await account.deleteSession(s.$id);
-      }
+      await account.get();
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  // =========================
+  // FORCE CLEAR SESSION
+  // =========================
+  async function clearSession() {
+    try {
+      await account.deleteSession("current");
     } catch {}
   }
 
+  // =========================
+  // MAIN HANDLER
+  // =========================
   async function handle() {
     if (!email || !password || (!isLogin && !name)) {
       alert("Fill all fields");
@@ -32,38 +47,62 @@ export default function Auth({ onLogin }) {
     try {
       setLoading(true);
 
+      // =========================
+      // LOGIN FLOW
+      // =========================
       if (isLogin) {
-        // ✅ LOGIN (MATCHES YOUR WORKING PROJECT)
-        await account.createEmailSession(email, password);
-      } else {
-        // 🔥 CLEAN OLD SESSION
-        await ensureNoSession();
+        const alreadyLoggedIn = await hasActiveSession();
 
-        // ✅ REGISTER
-        const user = await account.create(
+        if (!alreadyLoggedIn) {
+          try {
+            await account.createEmailSession(email, password);
+          } catch (err) {
+            // 🔥 Fix "session already exists"
+            if (err.message?.includes("session")) {
+              await clearSession();
+              await account.createEmailSession(email, password);
+            } else {
+              throw err;
+            }
+          }
+        }
+
+      } else {
+        // =========================
+        // REGISTER FLOW
+        // =========================
+
+        // 🔥 Ensure no session before register
+        await clearSession();
+
+        await account.create(
           ID.unique(),
           email,
           password,
           name
         );
 
-        // ✅ LOGIN AFTER REGISTER
+        // Login after register
         await account.createEmailSession(email, password);
 
         const currentUser = await account.get();
 
-        // ✅ CREATE WALLET
+        // Create wallet
         await databases.createDocument(
           DATABASE_ID,
           WALLET_COLLECTION,
           ID.unique(),
           {
             userId: currentUser.$id,
-            balance: 0
+            balance: 50,
+            locked: 0
           }
         );
       }
 
+      // =========================
+      // SUCCESS
+      // =========================
       onLogin();
 
     } catch (e) {
@@ -74,6 +113,9 @@ export default function Auth({ onLogin }) {
     }
   }
 
+  // =========================
+  // UI
+  // =========================
   return (
     <div style={styles.container}>
       <div style={styles.box}>
@@ -105,18 +147,34 @@ export default function Auth({ onLogin }) {
           onChange={(e) => setPassword(e.target.value)}
         />
 
-        <button style={styles.button} onClick={handle} disabled={loading}>
-          {loading ? "Please wait..." : isLogin ? "Login" : "Register"}
+        <button
+          style={styles.button}
+          onClick={handle}
+          disabled={loading}
+        >
+          {loading
+            ? "Please wait..."
+            : isLogin
+            ? "Login"
+            : "Register"}
         </button>
 
-        <p style={styles.switch} onClick={() => setIsLogin(!isLogin)}>
-          {isLogin ? "Create account" : "Login instead"}
+        <p
+          style={styles.switch}
+          onClick={() => setIsLogin(!isLogin)}
+        >
+          {isLogin
+            ? "Create account"
+            : "Login instead"}
         </p>
       </div>
     </div>
   );
 }
 
+// =========================
+// STYLES
+// =========================
 const styles = {
   container: {
     minHeight: "100vh",
@@ -150,7 +208,8 @@ const styles = {
     background: "gold",
     border: "none",
     borderRadius: 8,
-    fontWeight: "bold"
+    fontWeight: "bold",
+    cursor: "pointer"
   },
   switch: {
     marginTop: 10,
