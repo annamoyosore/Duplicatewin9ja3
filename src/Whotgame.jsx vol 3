@@ -570,7 +570,7 @@ return (
       ))}  
     </div>  
 
-    {showWin && (
+   {showWin && (
   <div style={styles.winBox}>
     🎉🎉 You Won ₦{winAmount}
   </div>
@@ -581,9 +581,6 @@ return (
     ❌ You Lost
   </div>
 )}
-)}
-    )}  
-
     <div style={styles.history}>  
       {game.history.slice().reverse().map((h, i) => (  
         <div key={i}>{h}</div>  
@@ -652,17 +649,30 @@ fontSize: 12,
 color: "#ff4d4d"
 },
 winBox: {
-position: "fixed",
-top: "40%",
-left: "50%",
-transform: "translate(-50%, -50%)",
-background: "gold",
-color: "#000",
-padding: 20,
-borderRadius: 10,
-fontWeight: "bold",
-zIndex: 999
+  position: "fixed",
+  top: "50%",
+  left: "50%",
+  transform: "translate(-50%, -50%)",
+  background: "gold",
+  color: "#000",
+  padding: 20,
+  borderRadius: 10,
+  fontWeight: "bold",
+  zIndex: 1000
 },
+
+loseBox: {
+  position: "fixed",
+  top: "50%",
+  left: "50%",
+  transform: "translate(-50%, -50%)",
+  background: "#ff4d4d",
+  color: "#fff",
+  padding: 20,
+  borderRadius: 10,
+  fontWeight: "bold",
+  zIndex: 999
+}
 error: {
 background: "red",
 padding: 6,
