@@ -273,11 +273,12 @@ useEffect(() => {
 
         // 🎯 UI EXIT
         if (parsed.winnerId === userId) {
-          setShowWin(true);
-          setTimeout(goHome, 3000);
-        } else {
-          setTimeout(goHome, 2500);
-        }
+  setShowWin(true);
+  setTimeout(goHome, 3000);
+} else {
+  setShowLose(true); // 👈 ADD THIS
+  setTimeout(goHome, 2500);
+}
 
         // 🚫 ONLY WINNER HANDLES PAYOUT
         if (parsed.winnerId !== userId) return;
@@ -573,6 +574,13 @@ return (
   <div style={styles.winBox}>
     🎉🎉 You Won ₦{winAmount}
   </div>
+)}
+
+{showLose && (
+  <div style={styles.loseBox}>
+    ❌ You Lost
+  </div>
+)}
 )}
     )}  
 
