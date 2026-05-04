@@ -19,7 +19,10 @@ import Wallet from "./pages/Wallet";
 import Lobby from "./pages/Lobby";
 import Transactions from "./pages/Transactions";
 import WhotGame from "./WhotGame";
-import AdminDashboard from "./pages/aaa"; // ✅ ADMIN PAGE
+import AdminDashboard from "./pages/aaa";
+
+// ✅ CASINO IMPORT
+import CasinoWheel from "./pages/CasinoWheel";
 
 // 🔒 ADMIN ID
 const ADMIN_ID = "69ef9fe863a02a7490b4";
@@ -77,15 +80,12 @@ function AdminRoute({ children }) {
 
   if (loading) return <p style={{ color: "white" }}>Loading...</p>;
 
-  // ❌ not logged in
   if (!user) return <Navigate to="/auth" replace />;
 
-  // ❌ not admin
   if (user.$id !== ADMIN_ID) {
     return <Navigate to="/dashboard" replace />;
   }
 
-  // ✅ admin
   return children;
 }
 
@@ -144,12 +144,23 @@ function AppRoutes() {
               goLobby={() => navigate("/lobby")}
               goWallet={() => navigate("/wallet")}
               goTransactions={() => navigate("/transactions")}
-              goAdmin={() => navigate("/admin")} // ✅ FIXED
+              goAdmin={() => navigate("/admin")}
+              goCasino={() => navigate("/casino")} // ✅ NEW
               logout={async () => {
                 await account.deleteSession("current");
                 navigate("/auth");
               }}
             />
+          </ProtectedRoute>
+        }
+      />
+
+      {/* ✅ CASINO ROUTE */}
+      <Route
+        path="/casino"
+        element={
+          <ProtectedRoute>
+            <CasinoWheel />
           </ProtectedRoute>
         }
       />
@@ -199,7 +210,7 @@ function AppRoutes() {
         }
       />
 
-      {/* ✅ ADMIN PANEL */}
+      {/* ADMIN */}
       <Route
         path="/admin"
         element={
