@@ -623,85 +623,86 @@ return (
 // STYLES
 // =========================
 const styles = {
-bg: {
-minHeight: "100vh",
-background: "green",
-display: "flex",
-justifyContent: "center",
-alignItems: "center"
-},
-box: {
-width: "95%",
-maxWidth: 450,
-background: "#000000cc",
-padding: 12,
-color: "#fff",
-borderRadius: 10
-},
-row: {
-display: "flex",
-justifyContent: "space-between",
-marginBottom: 6
-},
-hand: {
-display: "flex",
-flexWrap: "wrap",
-gap: 6,
-justifyContent: "center",
-marginTop: 10
-},
-card: {
-width: 65,
-cursor: "pointer"
-},
-center: {
-display: "flex",
-justifyContent: "center",
-gap: 10,
-marginTop: 10
-},
-marketBtn: {
-background: "gold",
-padding: 10,
-borderRadius: 8,
-border: "none"
-},
-history: {
-marginTop: 10,
-maxHeight: 120,
-overflow: "auto",
-fontSize: 12,
-color: "#ff4d4d"
-},
-winBox: {
-  position: "fixed",
-  top: "50%",
-  left: "50%",
-  transform: "translate(-50%, -50%)",
-  background: "gold",
-  color: "#000",
-  padding: 20,
-  borderRadius: 10,
-  fontWeight: "bold",
-  zIndex: 1000
-},
+  bg: {
+    minHeight: "100vh",
+    background: "green",
+    display: "flex",
+    justifyContent: "center",
+    alignItems: "center"
+  },
+  box: {
+    width: "95%",
+    maxWidth: 450,
+    background: "#000000cc",
+    padding: 12,
+    color: "#fff",
+    borderRadius: 10
+  },
+  row: {
+    display: "flex",
+    justifyContent: "space-between",
+    marginBottom: 6
+  },
+  hand: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: 6,
+    justifyContent: "center",
+    marginTop: 10
+  },
+  card: {
+    width: 65,
+    cursor: "pointer"
+  },
+  center: {
+    display: "flex",
+    justifyContent: "center",
+    gap: 10,
+    marginTop: 10
+  },
+  marketBtn: {
+    background: "gold",
+    padding: 10,
+    borderRadius: 8,
+    border: "none"
+  },
+  history: {
+    marginTop: 10,
+    maxHeight: 120,
+    overflow: "auto",
+    fontSize: 12,
+    color: "#ff4d4d"
+  },
+  winBox: {
+    position: "fixed",
+    top: "50%",
+    left: "50%",
+    transform: "translate(-50%, -50%)",
+    background: "gold",
+    color: "#000",
+    padding: 20,
+    borderRadius: 10,
+    fontWeight: "bold",
+    zIndex: 1000
+  },
 
-loseBox: {
-  position: "fixed",
-  top: "50%",
-  left: "50%",
-  transform: "translate(-50%, -50%)",
-  background: "#ff4d4d",
-  color: "#fff",
-  padding: 20,
-  borderRadius: 10,
-  fontWeight: "bold",
-  zIndex: 999
-}
-error: {
-background: "red",
-padding: 6,
-textAlign: "center",
-marginBottom: 6
-}
+  loseBox: {
+    position: "fixed",
+    top: "50%",
+    left: "50%",
+    transform: "translate(-50%, -50%)",
+    background: "#ff4d4d",
+    color: "#fff",
+    padding: 20,
+    borderRadius: 10,
+    fontWeight: "bold",
+    zIndex: 999
+  }, // ✅ THIS COMMA FIXES EVERYTHING
+
+  error: {
+    background: "red",
+    padding: 6,
+    textAlign: "center",
+    marginBottom: 6
+  }
 };
