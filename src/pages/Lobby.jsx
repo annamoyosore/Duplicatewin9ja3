@@ -16,7 +16,7 @@ import { lockFunds, unlockFunds } from "../lib/wallet";
 
 const GAME_COLLECTION = "games";
 const ADMIN_ID = "69ef9fe863a02a7490b4";
-const APP_VERSION = "1.0.7"; // 🔥 UPDATED VERSION
+const APP_VERSION = "1.0.7";
 
 // =========================
 // CREATE DECK
@@ -35,9 +35,9 @@ function createDeck() {
 }
 
 // =========================
-// CREATE GAME (NOW HOLDS POT)
+// CREATE GAME
 // =========================
-async function createGame(match, opponentId, pot) {
+async function createGame(match, opponentId) {
   const deck = createDeck();
 
   const hand1 = deck.splice(0, 6);
@@ -58,8 +58,8 @@ async function createGame(match, opponentId, pot) {
       status: "running",
       round: "1",
       winnerId: "",
-      pot: pot, // 🔥 IMPORTANT
-      turnStartTime: new Date().toISOString()
+      turnStartTime: new Date().toISOString(),
+      pot: match.pot // ✅ MOVE POT INTO GAME
     }
   );
 }
@@ -75,18 +75,6 @@ export default function Lobby({ goGame, back }) {
   const [user, setUser] = useState(null);
   const [wallet, setWallet] = useState(null);
   const [loadingMatchId, setLoadingMatchId] = useState(null);
-
-  // =========================
-  // 🔥 VERSION CHECK (AUTO UPDATE)
-  // =========================
-  useEffect(() => {
-    const stored = localStorage.getItem("app_version");
-
-    if (stored !== APP_VERSION) {
-      localStorage.setItem("app_version", APP_VERSION);
-      window.location.reload(true);
-    }
-  }, []);
 
   useEffect(() => {
     init();
@@ -107,9 +95,6 @@ export default function Lobby({ goGame, back }) {
     refresh(u.$id);
   }
 
-  // =========================
-  // REALTIME
-  // =========================
   useEffect(() => {
     if (!user) return;
 
@@ -124,69 +109,21 @@ export default function Lobby({ goGame, back }) {
   async function refresh(userId) {
     await Promise.all([
       loadMatches(userId),
-      loadActiveMatches(userId),
-      cleanupOldMatches()
+      loadActiveMatches(userId)
     ]);
   }
 
   // =========================
-  // DELETE FINISHED > 3 HOURS
+  // AVAILABLE MATCHES
   // =========================
-  async function cleanupOldMatches() {
+  async function loadMatches(userId) {
     const res = await databases.listDocuments(
       DATABASE_ID,
       MATCH_COLLECTION,
-      [Query.equal("status", "finished"), Query.limit(100)]
+      [Query.limit(100)]
     );
 
-    const now = Date.now();
-
-    await Promise.all(
-      res.documents.map(async (m) => {
-        const created = new Date(m.$createdAt).getTime();
-
-        if (now - created > 3 * 60 * 60 * 1000) {
-          try {
-            if (m.gameId) {
-              await databases.deleteDocument(
-                DATABASE_ID,
-                GAME_COLLECTION,
-                m.gameId
-              );
-            }
-
-            await databases.deleteDocument(
-              DATABASE_ID,
-              MATCH_COLLECTION,
-              m.$id
-            );
-          } catch {}
-        }
-      })
-    );
-  }
-
-  // =========================
-  // LOAD MATCHES
-  // =========================
-  async function loadMatches(userId) {
-    let all = [];
-    let offset = 0;
-
-    while (true) {
-      const res = await databases.listDocuments(
-        DATABASE_ID,
-        MATCH_COLLECTION,
-        [Query.limit(100), Query.offset(offset)]
-      );
-
-      all = [...all, ...res.documents];
-
-      if (res.documents.length < 100) break;
-      offset += 100;
-    }
-
-    const available = all.filter(
+    const available = res.documents.filter(
       (m) =>
         m.status === "waiting" &&
         !m.opponentId &&
@@ -200,27 +137,39 @@ export default function Lobby({ goGame, back }) {
   // ACTIVE MATCHES
   // =========================
   async function loadActiveMatches(userId) {
-    let all = [];
-    let offset = 0;
-
-    while (true) {
-      const res = await databases.listDocuments(
-        DATABASE_ID,
-        MATCH_COLLECTION,
-        [Query.limit(100), Query.offset(offset)]
-      );
-
-      all = [...all, ...res.documents];
-
-      if (res.documents.length < 100) break;
-      offset += 100;
-    }
-
-    const mine = all.filter(
-      (m) =>
-        (m.hostId === userId || m.opponentId === userId) &&
-        m.status !== "cancelled"
+    const res = await databases.listDocuments(
+      DATABASE_ID,
+      MATCH_COLLECTION,
+      [Query.limit(100), Query.orderDesc("$createdAt")]
     );
+
+    const now = Date.now();
+
+    const mine = [];
+
+    for (let m of res.documents) {
+      const isMine = m.hostId === userId || m.opponentId === userId;
+      if (!isMine) continue;
+
+      // 🧹 DELETE FINISHED AFTER 3 HOURS
+      if (m.status === "finished") {
+        const age = now - new Date(m.$updatedAt).getTime();
+        if (age > 3 * 60 * 60 * 1000) {
+          try {
+            await databases.deleteDocument(
+              DATABASE_ID,
+              MATCH_COLLECTION,
+              m.$id
+            );
+          } catch {}
+          continue;
+        }
+      }
+
+      if (m.status !== "cancelled") {
+        mine.push(m);
+      }
+    }
 
     setActiveMatches(mine);
 
@@ -245,7 +194,26 @@ export default function Lobby({ goGame, back }) {
   }
 
   // =========================
-  // JOIN MATCH (🔥 FIXED FLOW)
+  // CANCEL MATCH
+  // =========================
+  async function cancelMatch(match) {
+    try {
+      await databases.updateDocument(
+        DATABASE_ID,
+        MATCH_COLLECTION,
+        match.$id,
+        { status: "cancelled", refunded: true }
+      );
+
+      await unlockFunds(user.$id, match.stake);
+      refresh(user.$id);
+    } catch {
+      alert("Cancel failed");
+    }
+  }
+
+  // =========================
+  // JOIN MATCH
   // =========================
   async function joinMatch(match) {
     if (loadingMatchId) return;
@@ -266,34 +234,31 @@ export default function Lobby({ goGame, back }) {
         throw new Error("Insufficient balance");
       }
 
-      // lock opponent funds
       await lockFunds(user.$id, fresh.stake);
 
-      const total = fresh.stake * 2;
-      const adminCut = Math.floor(total * 0.1);
-      const gamePot = total - adminCut;
+      const totalPot = fresh.stake * 2;
+      const adminCut = Math.floor(totalPot * 0.1);
+      const finalPot = totalPot - adminCut;
 
-      // pay admin
+      // 💰 PAY ADMIN
       const adminRes = await databases.listDocuments(
         DATABASE_ID,
         WALLET_COLLECTION,
         [Query.equal("userId", ADMIN_ID), Query.limit(1)]
       );
 
-      if (adminRes.documents.length) {
-        const adminWallet = adminRes.documents[0];
+      const adminWallet = adminRes.documents[0];
 
-        await databases.updateDocument(
-          DATABASE_ID,
-          WALLET_COLLECTION,
-          adminWallet.$id,
-          {
-            balance: Number(adminWallet.balance || 0) + adminCut
-          }
-        );
-      }
+      await databases.updateDocument(
+        DATABASE_ID,
+        WALLET_COLLECTION,
+        adminWallet.$id,
+        {
+          balance: (adminWallet.balance || 0) + adminCut
+        }
+      );
 
-      // move pot to game + clear match pot
+      // 🧾 UPDATE MATCH + MOVE POT OUT
       const updated = await databases.updateDocument(
         DATABASE_ID,
         MATCH_COLLECTION,
@@ -301,13 +266,16 @@ export default function Lobby({ goGame, back }) {
         {
           opponentId: user.$id,
           status: "matched",
-          pot: 0, // 🔥 cleared
+          pot: 0, // 🔥 CLEAR MATCH POT
           adminPaid: true
         }
       );
 
-      // create game with pot
-      const game = await createGame(updated, user.$id, gamePot);
+      // 🎮 CREATE GAME WITH POT
+      const game = await createGame(
+        { ...updated, pot: finalPot },
+        user.$id
+      );
 
       await databases.updateDocument(
         DATABASE_ID,
@@ -332,10 +300,13 @@ export default function Lobby({ goGame, back }) {
   async function createMatch() {
     const amount = Number(stake);
 
-    if (!amount || amount < 50) return alert("Minimum ₦50");
+    if (!amount || amount < 50) {
+      return alert("Minimum ₦50");
+    }
 
-    if ((wallet?.balance || 0) < amount)
+    if ((wallet?.balance || 0) < amount) {
       return alert("Insufficient balance");
+    }
 
     try {
       await lockFunds(user.$id, amount);
@@ -352,12 +323,12 @@ export default function Lobby({ goGame, back }) {
           status: "waiting",
           gameId: "",
           adminPaid: false,
-          refunded: false
+          refunded: false,
+          createdAt: new Date().toISOString()
         }
       );
 
       setStake("");
-
     } catch (err) {
       alert(err.message);
     }
@@ -368,17 +339,17 @@ export default function Lobby({ goGame, back }) {
   // =========================
   return (
     <div style={styles.container}>
-      <h1>🎮 Game Lobby</h1>
+      <h1 style={styles.title}>🎮 Game Lobby</h1>
 
-      <h2>🔥 Your Matches</h2>
+      <h2 style={styles.section}>🔥 Your Matches</h2>
 
-      {activeMatches.map((m) => {
+      {activeMatches.map(m => {
         const game = gameMap[m.gameId];
 
         let turnLabel = "";
         if (game && game.status !== "finished") {
           turnLabel =
-            game.turn === user?.$id
+            game.turn === user.$id
               ? "🟢 Your Turn"
               : "🔴 Opponent Turn";
         }
@@ -388,13 +359,25 @@ export default function Lobby({ goGame, back }) {
             <div>
               <p>₦{m.stake}</p>
               <p>{m.status}</p>
-              {turnLabel && <p>{turnLabel}</p>}
+              {turnLabel && <p style={{ fontSize: 12 }}>{turnLabel}</p>}
             </div>
 
-            {m.status === "finished" ? (
-              <button disabled>✅ Finished</button>
+            {!m.opponentId ? (
+              <button
+                onClick={() => cancelMatch(m)}
+                style={styles.cancelBtn}
+              >
+                ❌ Cancel
+              </button>
+            ) : m.status === "finished" ? (
+              <button disabled style={styles.finishedBtn}>
+                ✅ Finished
+              </button>
             ) : (
-              <button onClick={() => goGame(m.gameId, m.stake)}>
+              <button
+                style={styles.resumeBtn}
+                onClick={() => goGame(m.gameId, m.stake)}
+              >
                 ▶ Resume
               </button>
             )}
@@ -402,25 +385,37 @@ export default function Lobby({ goGame, back }) {
         );
       })}
 
-      <h2>🎯 Available</h2>
+      <h2 style={styles.section}>🎯 Available</h2>
 
-      {matches.map((m) => (
+      {matches.map(m => (
         <div key={m.$id} style={styles.card}>
           <span>₦{m.stake}</span>
-          <button onClick={() => joinMatch(m)}>Join</button>
+          <button
+            onClick={() => joinMatch(m)}
+            style={styles.joinBtn}
+          >
+            Join
+          </button>
         </div>
       ))}
 
-      <input
-        type="number"
-        value={stake}
-        onChange={(e) => setStake(e.target.value)}
-        placeholder="Stake ₦"
-      />
+      <div style={styles.createBox}>
+        <input
+          type="number"
+          placeholder="Stake ₦ (Min 50)"
+          value={stake}
+          onChange={e => setStake(e.target.value)}
+          style={styles.input}
+        />
 
-      <button onClick={createMatch}>Create Match</button>
+        <button onClick={createMatch} style={styles.createBtn}>
+          Create Match
+        </button>
+      </div>
 
-      <button onClick={back}>← Back</button>
+      <button onClick={back} style={styles.back}>
+        ← Back
+      </button>
     </div>
   );
 }
@@ -430,11 +425,64 @@ export default function Lobby({ goGame, back }) {
 // =========================
 const styles = {
   container: { padding: 20, background: "#020617", color: "#fff" },
+  title: { fontSize: 28 },
+  section: { marginTop: 20, color: "gold" },
   card: {
     background: "#111827",
-    padding: 10,
-    margin: 10,
+    padding: 15,
+    margin: "10px 0",
     display: "flex",
-    justifyContent: "space-between"
-  }
+    justifyContent: "space-between",
+    alignItems: "center"
+  },
+
+  joinBtn: {
+    background: "gold",
+    padding: 10,
+    border: "none",
+    borderRadius: 6,
+    fontWeight: "bold"
+  },
+
+  resumeBtn: {
+    background: "#16a34a",
+    padding: 10,
+    color: "#fff",
+    border: "none",
+    borderRadius: 6
+  },
+
+  cancelBtn: {
+    background: "#dc2626",
+    padding: 10,
+    color: "#fff",
+    border: "none",
+    borderRadius: 6
+  },
+
+  finishedBtn: {
+    background: "#374151",
+    padding: 10,
+    color: "#fff",
+    border: "none",
+    borderRadius: 6
+  },
+
+  input: {
+    width: "100%",
+    padding: 10,
+    marginTop: 10
+  },
+
+  createBtn: {
+    width: "100%",
+    padding: 10,
+    background: "blue",
+    color: "#fff",
+    border: "none",
+    borderRadius: 6,
+    marginTop: 5
+  },
+
+  back: { marginTop: 20 }
 };
