@@ -336,25 +336,47 @@ if (winnerWallet.documents.length) {
     }
   );
 }
-          // 🔓 UNLOCK BOTH PLAYERS SAFELY
-          const stake = Number(match?.stake || 0);
+       // 🔓 UNLOCK BOTH PLAYERS SAFELY (SAFE VERSION)
+const stake = Number(parsed?.stake || match?.stake || 0);
 
-          for (let pid of parsed.players) {
-            const wallets = await databases.listDocuments(
-              DATABASE_ID,
-              WALLET_COLLECTION,
-              [Query.equal("userId", pid)]
-            );
+for (let pid of parsed.players) {
+  try {
+    const wallets = await databases.listDocuments(
+      DATABASE_ID,
+      WALLET_COLLECTION,
+      [Query.equal("userId", pid)]
+    );
 
-            if (wallets.documents.length) {
-              const w = wallets.documents[0];
+    if (wallets.documents.length) {
+      const w = wallets.documents[0];
 
-              await databases.updateDocument(
-                DATABASE_ID,
-                WALLET_COLLECTION,
-                w.$id,
-                {
-                  locked
+      await databases.updateDocument(
+        DATABASE_ID,
+        WALLET_COLLECTION,
+        w.$id,
+        {
+          locked: Math.max(0, Number(w.locked || 0) - stake)
+        }
+      );
+    }
+  } catch (err) {
+    console.error("❌ unlock error:", pid, err);
+  }
+}
+
+// ✅ CLOSE SUBSCRIBE CALLBACK
+}
+);
+
+// ✅ CLEANUP
+return () => unsub();
+
+}, [gameId, userId]);
+
+// =========================
+// 🚫 DO NOT PLACE UI ABOVE
+// =========================
+
 if (!game || !userId) return <div>Loading...</div>;
 
 const myIdx = game.players.indexOf(userId);
@@ -366,7 +388,6 @@ const top = game.discard ? decodeCard(game.discard) : null;
 
 const myName = myIdx === 0 ? game.hostName : game.opponentName;
 const oppName = myIdx === 0 ? game.opponentName : game.hostName;
-
 async function endRound(g, winnerIdx) {
 g = JSON.parse(JSON.stringify(g));
 
