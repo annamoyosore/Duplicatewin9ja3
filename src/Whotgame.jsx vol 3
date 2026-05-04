@@ -224,6 +224,7 @@ const [userId, setUserId] = useState(null);
 const [showWin, setShowWin] = useState(false);
 const [error, setError] = useState("");
 const [winAmount, setWinAmount] = useState(0);
+const [showLose, setShowLose] = useState(false);
 
 const payoutRef = useRef(false);
 const actionLock = useRef(false);
