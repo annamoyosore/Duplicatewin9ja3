@@ -364,6 +364,11 @@ for (let pid of parsed.players) {
   }
 }
 
+// ✅ CLOSE MAIN TRY BLOCK (VERY IMPORTANT)
+} catch (e) {
+  console.error("❌ payout error:", e);
+}
+
 // ✅ CLOSE SUBSCRIBE CALLBACK
 }
 );
@@ -372,7 +377,6 @@ for (let pid of parsed.players) {
 return () => unsub();
 
 }, [gameId, userId]);
-
 // =========================
 // 🚫 DO NOT PLACE UI ABOVE
 // =========================
