@@ -263,96 +263,108 @@ async (res) => {
 const parsed = parseGame(res.payload);
 setGame(parsed);
 
-if (parsed.status === "finished") {  
-    if (parsed.winnerId === userId) {  
-      setShowWin(true);  
-      setTimeout(goHome, 3000);  
-    } else {  
-      setTimeout(goHome, 2500);  
-    }  
+if (parsed.status === "finished") {
 
-    if (payoutRef.current) return;  
+  // UI exit
+  if (parsed.winnerId === userId) {
+    setShowWin(true);
+    setTimeout(goHome, 3000);
+  } else {
+    setTimeout(goHome, 2500);
+  }
 
-    const fresh = await databases.getDocument(  
-      DATABASE_ID,  
-      GAME_COLLECTION,  
-      parsed.$id  
-    );  
+  // 🚫 only winner handles payout
+  if (parsed.winnerId !== userId) return;
 
-    if (fresh.payoutDone) return;  
+  // 🚫 prevent multiple runs (client side)
+  if (payoutRef.current) return;
+  payoutRef.current = true;
 
-    payoutRef.current = true;  
+  try {
+    // 🔒 get fresh game state
+    const fresh = await databases.getDocument(
+      DATABASE_ID,
+      GAME_COLLECTION,
+      parsed.$id
+    );
 
-    try {  
-      const m = parsed.matchId  
-        ? await databases.getDocument(  
-            DATABASE_ID,  
-            MATCH_COLLECTION,  
-            parsed.matchId  
-          )  
-        : null;  
+    // 🛑 already paid
+    if (fresh.payoutDone === true) return;
 
-      const total = Number(m?.pot || 0);  
+    const total = Number(fresh.pot || 0);
 
-      const w = await databases.listDocuments(  
-        DATABASE_ID,  
-        WALLET_COLLECTION,  
-        [Query.equal("userId", parsed.winnerId)]  
-      );  
+    // 🛑 nothing to pay
+    if (total <= 0) return;
 
-      if (w.documents.length) {  
-        await databases.updateDocument(  
-          DATABASE_ID,  
-          WALLET_COLLECTION,  
-          w.documents[0].$id,  
-          {  
-            balance:  
-              Number(w.documents[0].balance || 0) + total  
-          }  
-        );  
-      }  
+    // 🔐 LOCK payout FIRST (CRITICAL)
+    await databases.updateDocument(
+      DATABASE_ID,
+      GAME_COLLECTION,
+      parsed.$id,
+      {
+        payoutDone: true,
+        pot: 0
+      }
+    );
 
-      for (let pid of parsed.players) {  
-        const wallets = await databases.listDocuments(  
-          DATABASE_ID,  
-          WALLET_COLLECTION,  
-          [Query.equal("userId", pid)]  
-        );  
+    // 💰 CREDIT WINNER
+    const winnerWallet = await databases.listDocuments(
+      DATABASE_ID,
+      WALLET_COLLECTION,
+      [Query.equal("userId", parsed.winnerId)]
+    );
 
-        if (wallets.documents.length) {  
-          await databases.updateDocument(  
-            DATABASE_ID,  
-            WALLET_COLLECTION,  
-            wallets.documents[0].$id,  
-            { locked: 0 }  
-          );  
-        }  
-      }  
+    if (winnerWallet.documents.length) {
+      const w = winnerWallet.documents[0];
 
-      // ✅ mark payout done  
-      await databases.updateDocument(  
-        DATABASE_ID,  
-        GAME_COLLECTION,  
-        parsed.$id,  
-        { payoutDone: true }  
-      );  
+      await databases.updateDocument(
+        DATABASE_ID,
+        WALLET_COLLECTION,
+        w.$id,
+        {
+          balance: Number(w.balance || 0) + total
+        }
+      );
+    }
 
-      // ✅ mark match finished  
-      if (parsed.matchId) {  
-        await databases.updateDocument(  
-          DATABASE_ID,  
-          MATCH_COLLECTION,  
-          parsed.matchId,  
-          { status: "finished" }  
-        );  
-      }  
+    // 🔓 UNLOCK PLAYERS (SAFE)
+    const stake = Number(match?.stake || 0);
 
-    } catch (e) {  
-      console.log("payout error", e);  
-    }  
-  }  
+    for (let pid of parsed.players) {
+      const wallets = await databases.listDocuments(
+        DATABASE_ID,
+        WALLET_COLLECTION,
+        [Query.equal("userId", pid)]
+      );
+
+      if (wallets.documents.length) {
+        const w = wallets.documents[0];
+
+        await databases.updateDocument(
+          DATABASE_ID,
+          WALLET_COLLECTION,
+          w.$id,
+          {
+            locked: Math.max(0, Number(w.locked || 0) - stake)
+          }
+        );
+      }
+    }
+
+    // ✅ mark match finished (optional but good)
+    if (parsed.matchId) {
+      await databases.updateDocument(
+        DATABASE_ID,
+        MATCH_COLLECTION,
+        parsed.matchId,
+        { status: "finished" }
+      );
+    }
+
+  } catch (e) {
+    console.error("❌ payout error:", e);
+  }
 }
-
 );
 
 // ✅ CORRECT PLACE (outside subscribe)
