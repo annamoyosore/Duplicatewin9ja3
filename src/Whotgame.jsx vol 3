@@ -570,7 +570,7 @@ return (
 
     {showWin && (
   <div style={styles.winBox}>
-    🎉 You Won ₦{game?.pot || 0}
+    🎉🎉 You Won ₦{winAmount}
   </div>
 )}
     )}  
