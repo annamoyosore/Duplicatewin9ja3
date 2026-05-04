@@ -293,45 +293,47 @@ useEffect(() => {
             parsed.$id
           );
 
-          // 🛑 ALREADY PAID (SERVER TRUTH)
-          if (fresh.payoutDone === true) return;
+         // 🛑 ALREADY PAID (SERVER TRUTH)
+if (fresh.payoutDone === true) return;
 
-          const total = Number(fresh.pot || 0);
+const total = Number(fresh.pot || 0);
 
-          // 🛑 NOTHING TO PAY
-          if (total <= 0) return;
+// 🛑 NOTHING TO PAY
+if (total <= 0) return;
 
-          // 🔐 LOCK PAYOUT FIRST (CRITICAL)
-          await databases.updateDocument(
-            DATABASE_ID,
-            GAME_COLLECTION,
-            parsed.$id,
-            {
-              payoutDone: true,
-              pot: 0
-            }
-          );
+// ✅ STORE WIN AMOUNT BEFORE POT IS CLEARED
+setWinAmount(total);
 
-          // 💰 CREDIT WINNER (AFTER LOCK)
-          const winnerWallet = await databases.listDocuments(
-            DATABASE_ID,
-            WALLET_COLLECTION,
-            [Query.equal("userId", parsed.winnerId)]
-          );
+// 🔐 LOCK PAYOUT FIRST (CRITICAL)
+await databases.updateDocument(
+  DATABASE_ID,
+  GAME_COLLECTION,
+  parsed.$id,
+  {
+    payoutDone: true,
+    pot: 0
+  }
+);
 
-          if (winnerWallet.documents.length) {
-            const w = winnerWallet.documents[0];
+// 💰 CREDIT WINNER (AFTER LOCK)
+const winnerWallet = await databases.listDocuments(
+  DATABASE_ID,
+  WALLET_COLLECTION,
+  [Query.equal("userId", parsed.winnerId)]
+);
 
-            await databases.updateDocument(
-              DATABASE_ID,
-              WALLET_COLLECTION,
-              w.$id,
-              {
-                balance: Number(w.balance || 0) + total
-              }
-            );
-          }
+if (winnerWallet.documents.length) {
+  const w = winnerWallet.documents[0];
 
+  await databases.updateDocument(
+    DATABASE_ID,
+    WALLET_COLLECTION,
+    w.$id,
+    {
+      balance: Number(w.balance || 0) + total
+    }
+  );
+}
           // 🔓 UNLOCK BOTH PLAYERS SAFELY
           const stake = Number(match?.stake || 0);
 
