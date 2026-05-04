@@ -223,6 +223,7 @@ const [match, setMatch] = useState(null);
 const [userId, setUserId] = useState(null);
 const [showWin, setShowWin] = useState(false);
 const [error, setError] = useState("");
+const [winAmount, setWinAmount] = useState(0);
 
 const payoutRef = useRef(false);
 const actionLock = useRef(false);
@@ -565,10 +566,11 @@ return (
       ))}  
     </div>  
 
-    {showWin && (  
-      <div style={styles.winBox}>  
-        🎉 You Won ₦{match?.pot || 0}  
-      </div>  
+    {showWin && (
+  <div style={styles.winBox}>
+    🎉 You Won ₦{game?.pot || 0}
+  </div>
+)}
     )}  
 
     <div style={styles.history}>  
