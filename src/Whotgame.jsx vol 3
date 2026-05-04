@@ -93,7 +93,7 @@ star: "★",
 cross: "✚"
 };
 
-return ${shapeMap[c.shape]} ${c.number};
+return `${shapeMap[c.shape]} ${c.number}`;
 }
 
 // =========================
