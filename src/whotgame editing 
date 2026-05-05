@@ -451,24 +451,6 @@ export default function WhotGame({ gameId, goHome }) {
 
         return;
       }
-
-      const deck = createDeck();
-      g.hands = [deck.splice(0,6), deck.splice(0,6)];
-      g.discard = deck.pop();
-      g.deck = deck;
-      g.pendingPick = 0;
-      g.round++;
-
-      await databases.updateDocument(
-        DATABASE_ID,
-        GAME_COLLECTION,
-        gameId,
-        encodeGame(g)
-      );
-
-      return;
-    }
-
     // ✅ NORMAL PLAY
     await databases.updateDocument(
       DATABASE_ID,
