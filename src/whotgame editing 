@@ -397,18 +397,18 @@ export default function WhotGame({ gameId, goHome }) {
   const top = decodeCard(game.discard);
 
   async function playCard(i) {
-    if (actionLock.current || game.status === "finished") return;
-    if (game.turn !== userId) return invalidMove("Not your turn");
+  if (actionLock.current || game.status === "finished") return;
+  if (game.turn !== userId) return invalidMove("Not your turn");
 
-    actionLock.current = true;
+  actionLock.current = true;
 
+  try {
     const g = JSON.parse(JSON.stringify(game));
     const card = g.hands[myIdx][i];
     const current = decodeCard(card);
     const topDecoded = decodeCard(g.discard);
 
     if (g.pendingPick > 0 && ![2,14].includes(current.number)) {
-      actionLock.current = false;
       return invalidMove("Use 2 or 14");
     }
 
@@ -417,7 +417,6 @@ export default function WhotGame({ gameId, goHome }) {
       current.shape !== topDecoded.shape &&
       current.number !== 14
     ) {
-      actionLock.current = false;
       return invalidMove("Wrong move");
     }
 
@@ -431,6 +430,7 @@ export default function WhotGame({ gameId, goHome }) {
 
     g.history = pushHistory(g, `${myLabel} played ${card}`);
 
+    // ✅ WIN ROUND
     if (!g.hands[myIdx].length) {
       g.scores[myIdx]++;
 
@@ -449,10 +449,44 @@ export default function WhotGame({ gameId, goHome }) {
           });
         }
 
-        actionLock.current = false;
         return;
       }
 
+      const deck = createDeck();
+      g.hands = [deck.splice(0,6), deck.splice(0,6)];
+      g.discard = deck.pop();
+      g.deck = deck;
+      g.pendingPick = 0;
+      g.round++;
+
+      await databases.updateDocument(
+        DATABASE_ID,
+        GAME_COLLECTION,
+        gameId,
+        encodeGame(g)
+      );
+
+      return;
+    }
+
+    // ✅ NORMAL PLAY
+    await databases.updateDocument(
+      DATABASE_ID,
+      GAME_COLLECTION,
+      gameId,
+      {
+        ...encodeGame(g),
+        discard: card,
+        turn: nextTurn
+      }
+    );
+
+  } catch (err) {
+    console.error(err);
+  } finally {
+    actionLock.current = false;
+  }
+}
       const deck = createDeck();
       g.hands = [deck.splice(0,6), deck.splice(0,6)];
       g.discard = deck.pop();
@@ -490,86 +524,88 @@ async function drawMarket() {
 
   actionLock.current = true;
 
-  const g = JSON.parse(JSON.stringify(game));
+  try {
+    const g = JSON.parse(JSON.stringify(game));
 
-  // ✅ BEFORE DRAW
-  if (!g.deck.length) {
-    const updated = handleEmptyMarket(g, gameId);
+    // BEFORE DRAW
+    if (!g.deck.length) {
+      const updated = handleEmptyMarket(g, gameId);
+
+      await databases.updateDocument(
+        DATABASE_ID,
+        GAME_COLLECTION,
+        gameId,
+        encodeGame(updated)
+      );
+
+      if (updated.status === "finished" && g.matchId) {
+        await databases.updateDocument(
+          DATABASE_ID,
+          MATCH_COLLECTION,
+          g.matchId,
+          {
+            status: "finished",
+            winnerId: updated.winnerId
+          }
+        );
+      }
+
+      return;
+    }
+
+    let count = g.pendingPick > 0 ? g.pendingPick : 1;
+
+    g.history = pushHistory(g, `${myLabel} picked ${count}`);
+
+    for (let i = 0; i < count; i++) {
+      if (!g.deck.length) break;
+      g.hands[myIdx].push(g.deck.pop());
+    }
+
+    // AFTER DRAW
+    if (!g.deck.length) {
+      const updated = handleEmptyMarket(g, gameId);
+
+      await databases.updateDocument(
+        DATABASE_ID,
+        GAME_COLLECTION,
+        gameId,
+        encodeGame(updated)
+      );
+
+      if (updated.status === "finished" && g.matchId) {
+        await databases.updateDocument(
+          DATABASE_ID,
+          MATCH_COLLECTION,
+          g.matchId,
+          {
+            status: "finished",
+            winnerId: updated.winnerId
+          }
+        );
+      }
+
+      return;
+    }
+
+    // NORMAL FLOW
+    g.pendingPick = 0;
 
     await databases.updateDocument(
       DATABASE_ID,
       GAME_COLLECTION,
       gameId,
-      encodeGame(updated)
+      {
+        ...encodeGame(g),
+        turn: g.players[oppIdx]
+      }
     );
 
-    // sync match if finished
-    if (updated.status === "finished" && g.matchId) {
-      await databases.updateDocument(
-        DATABASE_ID,
-        MATCH_COLLECTION,
-        g.matchId,
-        {
-          status: "finished",
-          winnerId: updated.winnerId
-        }
-      );
-    }
-
+  } catch (err) {
+    console.error(err);
+  } finally {
     actionLock.current = false;
-    return;
   }
-
-  let count = g.pendingPick > 0 ? g.pendingPick : 1;
-
-  g.history = pushHistory(g, `${myLabel} picked ${count}`);
-
-  for (let i = 0; i < count; i++) {
-    if (!g.deck.length) break;
-    g.hands[myIdx].push(g.deck.pop());
-  }
-
-  // ✅ AFTER DRAW
-  if (!g.deck.length) {
-    const updated = handleEmptyMarket(g, gameId);
-
-    await databases.updateDocument(
-      DATABASE_ID,
-      GAME_COLLECTION,
-      gameId,
-      encodeGame(updated)
-    );
-
-    if (updated.status === "finished" && g.matchId) {
-      await databases.updateDocument(
-        DATABASE_ID,
-        MATCH_COLLECTION,
-        g.matchId,
-        {
-          status: "finished",
-          winnerId: updated.winnerId
-        }
-      );
-    }
-
-    actionLock.current = false;
-    return;
-  }
-
-  // ✅ NORMAL FLOW
-  g.pendingPick = 0;
-
-  await databases.updateDocument(
-    DATABASE_ID,
-    GAME_COLLECTION,
-    gameId,
-    {
-      ...encodeGame(g),
-      turn: g.players[oppIdx]
-    }
-  );
-
-  actionLock.current = false;
 }
 return (
     <div style={styles.bg}>
