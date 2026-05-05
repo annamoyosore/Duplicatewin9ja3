@@ -215,6 +215,51 @@ function ensureGameReady(g) {
 function pushHistory(g, text) {
   return [...(g.history || []), text].slice(-10);
 }
+
+// ✅ ADD HERE 👇
+function handleEmptyMarket(g, gameId) {
+  const p0 = g.hands[0].length;
+  const p1 = g.hands[1].length;
+
+  let winnerIdx = null;
+
+  if (p0 < p1) winnerIdx = 0;
+  else if (p1 < p0) winnerIdx = 1;
+
+  if (winnerIdx === null) {
+    return {
+      ...g,
+      history: pushHistory(g, "⚖️ Round draw (market finished)")
+    };
+  }
+
+  g.scores[winnerIdx]++;
+
+  if (g.scores[winnerIdx] >= 2) {
+    return {
+      ...g,
+      status: "finished",
+      winnerId: g.players[winnerIdx],
+      turn: null,
+      history: pushHistory(
+        g,
+        `🏆 ${winnerIdx === 0 ? "Player 1" : "Player 2"} wins (market empty)`
+      )
+    };
+  }
+
+  const deck = createDeck();
+
+  return {
+    ...g,
+    hands: [deck.splice(0,6), deck.splice(0,6)],
+    discard: deck.pop(),
+    deck,
+    pendingPick: 0,
+    round: g.round + 1,
+    history: pushHistory(g, "♻️ New round (market empty)")
+  };
+}
 export default function WhotGame({ gameId, goHome }) {
 
   const [game, setGame] = useState(null);
