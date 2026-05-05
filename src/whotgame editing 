@@ -484,14 +484,15 @@ export default function WhotGame({ gameId, goHome }) {
 
     actionLock.current = false;
   }
-
-  async function drawMarket() {
-  if (game.status === "finished") return;
+async function drawMarket() {
+  if (actionLock.current || game.status === "finished") return;
   if (game.turn !== userId) return invalidMove("Wait your turn");
+
+  actionLock.current = true;
 
   const g = JSON.parse(JSON.stringify(game));
 
-  // ✅ CHECK BEFORE DRAW
+  // ✅ BEFORE DRAW
   if (!g.deck.length) {
     const updated = handleEmptyMarket(g, gameId);
 
@@ -502,30 +503,7 @@ export default function WhotGame({ gameId, goHome }) {
       encodeGame(updated)
     );
 
-    return;
-  }
-
-  let count = g.pendingPick > 0 ? g.pendingPick : 1;
-
-  g.history = pushHistory(g, `${myLabel} picked ${count}`);
-
-  for (let i = 0; i < count; i++) {
-    if (!g.deck.length) break;
-    g.hands[myIdx].push(g.deck.pop());
-  }
-
-  // ✅ CHECK AFTER DRAW
-  if (!g.deck.length) {
-    const updated = handleEmptyMarket(g, gameId);
-
-    await databases.updateDocument(
-      DATABASE_ID,
-      GAME_COLLECTION,
-      gameId,
-      encodeGame(updated)
-    );
-
-    // ✅ sync match if game finished
+    // sync match if finished
     if (updated.status === "finished" && g.matchId) {
       await databases.updateDocument(
         DATABASE_ID,
@@ -542,7 +520,43 @@ export default function WhotGame({ gameId, goHome }) {
     return;
   }
 
-  // ✅ NORMAL FLOW (THIS WAS MISSING IN YOUR FILE)
+  let count = g.pendingPick > 0 ? g.pendingPick : 1;
+
+  g.history = pushHistory(g, `${myLabel} picked ${count}`);
+
+  for (let i = 0; i < count; i++) {
+    if (!g.deck.length) break;
+    g.hands[myIdx].push(g.deck.pop());
+  }
+
+  // ✅ AFTER DRAW
+  if (!g.deck.length) {
+    const updated = handleEmptyMarket(g, gameId);
+
+    await databases.updateDocument(
+      DATABASE_ID,
+      GAME_COLLECTION,
+      gameId,
+      encodeGame(updated)
+    );
+
+    if (updated.status === "finished" && g.matchId) {
+      await databases.updateDocument(
+        DATABASE_ID,
+        MATCH_COLLECTION,
+        g.matchId,
+        {
+          status: "finished",
+          winnerId: updated.winnerId
+        }
+      );
+    }
+
+    actionLock.current = false;
+    return;
+  }
+
+  // ✅ NORMAL FLOW
   g.pendingPick = 0;
 
   await databases.updateDocument(
