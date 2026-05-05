@@ -396,7 +396,7 @@ export default function WhotGame({ gameId, goHome }) {
   const oppCards = game.hands[oppIdx]?.length || 0;
   const top = decodeCard(game.discard);
 
-  async function playCard(i) {
+ async function playCard(i) {
   if (actionLock.current || game.status === "finished") return;
   if (game.turn !== userId) return invalidMove("Not your turn");
 
@@ -408,10 +408,12 @@ export default function WhotGame({ gameId, goHome }) {
     const current = decodeCard(card);
     const topDecoded = decodeCard(g.discard);
 
-    if (g.pendingPick > 0 && ![2,14].includes(current.number)) {
+    // 🔒 PICK STACK RULE
+    if (g.pendingPick > 0 && ![2, 14].includes(current.number)) {
       return invalidMove("Use 2 or 14");
     }
 
+    // ❌ INVALID MOVE
     if (
       current.number !== topDecoded.number &&
       current.shape !== topDecoded.shape &&
@@ -420,21 +422,23 @@ export default function WhotGame({ gameId, goHome }) {
       return invalidMove("Wrong move");
     }
 
+    // ✅ REMOVE CARD
     g.hands[myIdx].splice(i, 1);
 
     let nextTurn = g.players[oppIdx];
 
+    // 🔁 SPECIAL RULES
     if (current.number === 1 || current.number === 8) nextTurn = userId;
     if (current.number === 2) g.pendingPick += 2;
     if (current.number === 14) g.pendingPick += 1;
 
     g.history = pushHistory(g, `${myLabel} played ${card}`);
 
-    // ✅ WIN ROUND
+    // 🏆 ROUND WIN
     if (!g.hands[myIdx].length) {
       g.scores[myIdx]++;
 
-      // 🏆 WIN MATCH
+      // 🏁 MATCH WIN
       if (g.scores[myIdx] >= 2) {
         await databases.updateDocument(DATABASE_ID, GAME_COLLECTION, gameId, {
           ...encodeGame(g),
@@ -460,7 +464,7 @@ export default function WhotGame({ gameId, goHome }) {
 
       // 🔁 NEW ROUND
       const deck = createDeck();
-      g.hands = [deck.splice(0,6), deck.splice(0,6)];
+      g.hands = [deck.splice(0, 6), deck.splice(0, 6)];
       g.discard = deck.pop();
       g.deck = deck;
       g.pendingPick = 0;
@@ -476,7 +480,7 @@ export default function WhotGame({ gameId, goHome }) {
       return;
     }
 
-    // ✅ NORMAL PLAY
+    // ✅ NORMAL TURN
     await databases.updateDocument(
       DATABASE_ID,
       GAME_COLLECTION,
