@@ -490,27 +490,61 @@ export default function WhotGame({ gameId, goHome }) {
     if (game.turn !== userId) return invalidMove("Wait your turn");
 
     const g = JSON.parse(JSON.stringify(game));
-    let count = g.pendingPick > 0 ? g.pendingPick : 1;
 
-    g.history = pushHistory(g, `${myLabel} picked ${count}`);
+// ✅ CHECK BEFORE DRAW
+if (!g.deck.length) {
+  const updated = handleEmptyMarket(g, gameId);
 
-    for (let i = 0; i < count; i++) {
-      if (!g.deck.length) break;
-      g.hands[myIdx].push(g.deck.pop());
-    }
+  await databases.updateDocument(
+    DATABASE_ID,
+    GAME_COLLECTION,
+    gameId,
+    encodeGame(updated)
+  );
 
-    g.pendingPick = 0;
+  return;
+}
 
+let count = g.pendingPick > 0 ? g.pendingPick : 1;
+
+g.history = pushHistory(g, `${myLabel} picked ${count}`);
+
+for (let i = 0; i < count; i++) {
+  if (!g.deck.length) break;
+  g.hands[myIdx].push(g.deck.pop());
+}
+
+// ✅ CHECK AFTER DRAW
+if (!g.deck.length) {
+  const updated = handleEmptyMarket(g, gameId);
+
+  await databases.updateDocument(
+    DATABASE_ID,
+    GAME_COLLECTION,
+    gameId,
+    encodeGame(updated)
+  );
+
+  // ✅ ADD THIS (VERY IMPORTANT)
+  if (updated.status === "finished" && g.matchId) {
     await databases.updateDocument(
       DATABASE_ID,
-      GAME_COLLECTION,
-      gameId,
+      MATCH_COLLECTION,
+      g.matchId,
       {
-        ...encodeGame(g),
-        turn: g.players[oppIdx]
+        status: "finished",
+        winnerId: updated.winnerId
       }
     );
   }
+
+  actionLock.current = false;
+return;
+} // closes IF block
+
+} // ✅ closes drawMarket() function
+
+return (
 return (
     <div style={styles.bg}>
       <div style={styles.box}>
