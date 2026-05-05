@@ -486,65 +486,77 @@ export default function WhotGame({ gameId, goHome }) {
   }
 
   async function drawMarket() {
-    if (game.status === "finished") return;
-    if (game.turn !== userId) return invalidMove("Wait your turn");
+  if (game.status === "finished") return;
+  if (game.turn !== userId) return invalidMove("Wait your turn");
 
-    const g = JSON.parse(JSON.stringify(game));
+  const g = JSON.parse(JSON.stringify(game));
 
-// ✅ CHECK BEFORE DRAW
-if (!g.deck.length) {
-  const updated = handleEmptyMarket(g, gameId);
+  // ✅ CHECK BEFORE DRAW
+  if (!g.deck.length) {
+    const updated = handleEmptyMarket(g, gameId);
 
-  await databases.updateDocument(
-    DATABASE_ID,
-    GAME_COLLECTION,
-    gameId,
-    encodeGame(updated)
-  );
-
-  return;
-}
-
-let count = g.pendingPick > 0 ? g.pendingPick : 1;
-
-g.history = pushHistory(g, `${myLabel} picked ${count}`);
-
-for (let i = 0; i < count; i++) {
-  if (!g.deck.length) break;
-  g.hands[myIdx].push(g.deck.pop());
-}
-
-// ✅ CHECK AFTER DRAW
-if (!g.deck.length) {
-  const updated = handleEmptyMarket(g, gameId);
-
-  await databases.updateDocument(
-    DATABASE_ID,
-    GAME_COLLECTION,
-    gameId,
-    encodeGame(updated)
-  );
-
-  // ✅ ADD THIS (VERY IMPORTANT)
-  if (updated.status === "finished" && g.matchId) {
     await databases.updateDocument(
       DATABASE_ID,
-      MATCH_COLLECTION,
-      g.matchId,
-      {
-        status: "finished",
-        winnerId: updated.winnerId
-      }
+      GAME_COLLECTION,
+      gameId,
+      encodeGame(updated)
     );
+
+    return;
   }
 
+  let count = g.pendingPick > 0 ? g.pendingPick : 1;
+
+  g.history = pushHistory(g, `${myLabel} picked ${count}`);
+
+  for (let i = 0; i < count; i++) {
+    if (!g.deck.length) break;
+    g.hands[myIdx].push(g.deck.pop());
+  }
+
+  // ✅ CHECK AFTER DRAW
+  if (!g.deck.length) {
+    const updated = handleEmptyMarket(g, gameId);
+
+    await databases.updateDocument(
+      DATABASE_ID,
+      GAME_COLLECTION,
+      gameId,
+      encodeGame(updated)
+    );
+
+    // ✅ sync match if game finished
+    if (updated.status === "finished" && g.matchId) {
+      await databases.updateDocument(
+        DATABASE_ID,
+        MATCH_COLLECTION,
+        g.matchId,
+        {
+          status: "finished",
+          winnerId: updated.winnerId
+        }
+      );
+    }
+
+    actionLock.current = false;
+    return;
+  }
+
+  // ✅ NORMAL FLOW (THIS WAS MISSING IN YOUR FILE)
+  g.pendingPick = 0;
+
+  await databases.updateDocument(
+    DATABASE_ID,
+    GAME_COLLECTION,
+    gameId,
+    {
+      ...encodeGame(g),
+      turn: g.players[oppIdx]
+    }
+  );
+
   actionLock.current = false;
-return;
-} // closes IF block
-
-} // ✅ closes drawMarket() function
-
-return (
+}
 return (
     <div style={styles.bg}>
       <div style={styles.box}>
