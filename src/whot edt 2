@@ -586,91 +586,45 @@ async function playCard(i) {
 
     g.history = pushHistory(g, `${myLabel} played ${card}`);
 
-    // 🏆 ROUND WIN
-    if (!g.hands[myIdx].length) {
-      g.scores[myIdx]++;
+ // 🏆 ROUND WIN
+if (!g.hands[myIdx].length) {
+  g.scores[myIdx]++;
 
-      // 🏁 MATCH WIN
-      if (g.scores[myIdx] >= 2) {
-
-        // 🔥 PAYOUT (ONLY ONCE)
-        if (!g.payoutDone && g.matchId) {
-          try {
-            const m = await databases.getDocument(
-              DATABASE_ID,
-              MATCH_COLLECTION,
-              g.matchId
-            );
-
-            const pot = Number(m.pot || 0);
-
-            // 💰 CREDIT WINNER
-            const walletRes = await databases.listDocuments(
-              DATABASE_ID,
-              WALLET_COLLECTION,
-              [Query.equal("userId", userId)]
-            );
-
-            if (walletRes.documents.length) {
-              const wallet = walletRes.documents[0];
-
-              await databases.updateDocument(
-                DATABASE_ID,
-                WALLET_COLLECTION,
-                wallet.$id,
-                {
-                  balance: Number(wallet.balance || 0) + pot
-                }
-              );
-            }
-
-            // 🧹 RESET POT
-            await databases.updateDocument(
-              DATABASE_ID,
-              MATCH_COLLECTION,
-              g.matchId,
-              {
-                status: "finished",
-                winnerId: userId,
-                pot: 0
-              }
-            );
-
-            g.payoutDone = true;
-
-          } catch (err) {
-            console.error("Payout failed:", err);
-          }
-        }
-
-        await databases.updateDocument(DATABASE_ID, GAME_COLLECTION, gameId, {
-          ...encodeGame(g),
-          status: "finished",
-          winnerId: userId,
-          payoutDone: true,
-          turn: null
-        });
-
-        return;
+  // 🏁 MATCH WIN
+  if (g.scores[myIdx] >= 2) {
+    await databases.updateDocument(
+      DATABASE_ID,
+      GAME_COLLECTION,
+      gameId,
+      {
+        ...encodeGame(g),
+        status: "finished",
+        winnerId: userId,
+        payoutDone: false, // ✅ correct
+        turn: null
       }
+    );
 
-      // 🔁 NEW ROUND
-      const deck = createDeck();
-      g.hands = [deck.splice(0, 6), deck.splice(0, 6)];
-      g.discard = deck.pop();
-      g.deck = deck;
-      g.pendingPick = 0;
-      g.round++;
+    return;
+  }
 
-      await databases.updateDocument(
-        DATABASE_ID,
-        GAME_COLLECTION,
-        gameId,
-        encodeGame(g)
-      );
+  // 🔁 NEW ROUND
+  const deck = createDeck();
+  g.hands = [deck.splice(0, 6), deck.splice(0, 6)];
+  g.discard = deck.pop();
+  g.deck = deck;
+  g.pendingPick = 0;
+  g.round++;
 
-      return;
-    }
+  await databases.updateDocument(
+    DATABASE_ID,
+    GAME_COLLECTION,
+    gameId,
+    encodeGame(g)
+  );
+
+  return;
+}
 
     // ✅ NORMAL TURN
     await databases.updateDocument(
