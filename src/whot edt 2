@@ -488,9 +488,6 @@ async function handlePayout(g) {
   try {
     if (!g.matchId || !g.winnerId) return;
 
-    // 🛑 prevent double run
-    if (payoutRef.current) return;
-
     const matchDoc = await databases.getDocument(
       DATABASE_ID,
       MATCH_COLLECTION,
@@ -548,84 +545,10 @@ async function handlePayout(g) {
   } catch (err) {
     console.error("Payout error:", err);
   }
-}// 🔁 SPECIAL RULES
-if (current.number === 1 || current.number === 8) nextTurn = userId;
-if (current.number === 2) g.pendingPick += 2;
-if (current.number === 14) g.pendingPick += 1;
+} // ✅ FIXED: function properly closed
 
-g.history = pushHistory(g, `${myLabel} played ${card}`);
 
-// 🏆 ROUND WIN
-if (!g.hands[myIdx].length) {
-  g.scores[myIdx]++;
-
-  // 🏁 MATCH WIN
-  if (g.scores[myIdx] >= 2) {
-    await databases.updateDocument(
-      DATABASE_ID,
-      GAME_COLLECTION,
-      gameId,
-      {
-        ...encodeGame(g),
-        status: "finished",
-        winnerId: userId,
-        payoutDone: false, // ✅ FIX
-        turn: null
-      }
-    );
-
-    if (g.matchId) {
-      await databases.updateDocument(
-        DATABASE_ID,
-        MATCH_COLLECTION,
-        g.matchId,
-        {
-          status: "finished",
-          winnerId: userId,
-          payoutDone: false // ✅ FIX
-        }
-      );
-    }
-
-    return;
-  }
-
-  // 🔁 NEW ROUND
-  const deck = createDeck();
-  g.hands = [deck.splice(0, 6), deck.splice(0, 6)];
-  g.discard = deck.pop();
-  g.deck = deck;
-  g.pendingPick = 0;
-  g.round++;
-
-  await databases.updateDocument(
-    DATABASE_ID,
-    GAME_COLLECTION,
-    gameId,
-    encodeGame(g)
-  );
-
-  return;
-}
-
-// ✅ NORMAL TURN
-await databases.updateDocument(
-  DATABASE_ID,
-  GAME_COLLECTION,
-  gameId,
-  {
-    ...encodeGame(g),
-    discard: card,
-    turn: nextTurn
-  }
-);
-
-} catch (err) {
-  console.error(err);
-} finally {
-  actionLock.current = false;
-}
-}
+// 👇 NOW COMPLETELY SEPARATE FUNCTION
 async function playCard(i) {
   if (actionLock.current || game.status === "finished") return;
   if (game.turn !== userId) return invalidMove("Not your turn");
@@ -656,7 +579,6 @@ async function playCard(i) {
     g.hands[myIdx].splice(i, 1);
 
     let nextTurn = g.players[oppIdx];
-
     // 🔁 SPECIAL RULES
     if (current.number === 1 || current.number === 8) nextTurn = userId;
     if (current.number === 2) g.pendingPick += 2;
