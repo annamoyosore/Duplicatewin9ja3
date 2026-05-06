@@ -711,13 +711,12 @@ async function drawMarket() {
       gameId,
       encodeGame(g)
     );
-
-  } catch (err) {
+} catch (err) {
     console.error("drawMarket error:", err);
   } finally {
     actionLock.current = false;
   }
-}
+} // ✅ ONLY ONE closing brace here
 
 
 // =========================
@@ -781,6 +780,13 @@ return (
             ? "🟢 YOUR TURN"
             : "⏳ OPPONENT"}
         </p>
+
+        <button
+          style={styles.chatBtn}
+          onClick={() => setShowChat(true)}
+        >
+          💬 Message
+        </button>
       </div>
 
       <div style={styles.center}>
@@ -794,85 +800,84 @@ return (
         {hand.map((c, i) => (
           <img
             key={i}
-            src={drawCard(decodeCard(c))}
-            style={styles.card}
-            onClick={() => playCard(i)}
-          />
-        ))}
-      </div>
+           src={drawCard(decodeCard(c))}
+        style={styles.card}
+        onClick={() => playCard(i)}
+      />
+    ))}
+  </div>
 
-      {showWin && (
-        <div style={styles.winBox}>
-          🎉 You Won ₦{match?.pot || 0}
-        </div>
+  {showWin && (
+    <div style={styles.winBox}>
+      🎉 You Won ₦{match?.pot || 0}
+    </div>
+  )}
+
+  <div style={styles.history}>
+    {(game.history || [])
+      .slice()
+      .reverse()
+      .map((h, i) => (
+        <div key={i}>{h}</div>
+      ))}
+  </div>
+
+  {/* CHAT BUTTON WITH RED DOT */}
+  <div style={{ textAlign: "center", marginTop: 6 }}>
+    <button
+      style={{ ...styles.chatBtn, position: "relative" }}
+      onClick={() => {
+        setShowChat(true);
+        setMatch(prev =>
+          prev ? { ...prev, hasUnread: false } : prev
+        );
+      }}
+    >
+      💬 Message
+
+      {match?.hasUnread && (
+        <span
+          style={{
+            position: "absolute",
+            top: -3,
+            right: -3,
+            width: 10,
+            height: 10,
+            background: "red",
+            borderRadius: "50%"
+          }}
+        />
       )}
+    </button>
+  </div>
 
-      <div style={styles.history}>
-        {(game.history || [])
-          .slice()
-          .reverse()
-          .map((h, i) => (
-            <div key={i}>{h}</div>
-          ))}
-      </div>
+  <button onClick={goHome}>Exit</button>
 
-      {/* CHAT BUTTON WITH RED DOT */}
-      <div style={{ textAlign: "center", marginTop: 6 }}>
-        <button
-          style={styles.chatBtn}
-          onClick={() => {
-            setShowChat(true);
+  {/* CHAT POPUP */}
+  {showChat && game?.matchId && (
+    <div style={styles.chatOverlay}>
+      <div style={styles.chatBox}>
+
+        <div style={styles.chatHeader}>
+          <span>💬 Match Chat</span>
+          <button onClick={() => setShowChat(false)}>❌</button>
+        </div>
+
+        <Messages
+          matchId={game.matchId}
+          onRead={() => {
             setMatch(prev =>
               prev ? { ...prev, hasUnread: false } : prev
             );
           }}
-        >
-          💬 Message
+        />
 
-          {match?.hasUnread && (
-            <span
-              style={{
-                position: "absolute",
-                top: -3,
-                right: -3,
-                width: 10,
-                height: 10,
-                background: "red",
-                borderRadius: "50%"
-              }}
-            />
-          )}
-        </button>
       </div>
-
-      <button onClick={goHome}>Exit</button>
-
-      {/* CHAT POPUP */}
-      {showChat && game?.matchId && (
-        <div style={styles.chatOverlay}>
-          <div style={styles.chatBox}>
-
-            <div style={styles.chatHeader}>
-              <span>💬 Match Chat</span>
-              <button onClick={() => setShowChat(false)}>❌</button>
-            </div>
-
-            <Messages
-              matchId={game.matchId}
-              onRead={() => {
-                setMatch(prev =>
-                  prev ? { ...prev, hasUnread: false } : prev
-                );
-              }}
-            />
-
-          </div>
-        </div>
-      )}
-
     </div>
-  </div>
-);
+  )}
+
+</div>
+</div>
 ); // ✅ CLOSE JSX
 
 } // ✅ CLOSE COMPONENT
