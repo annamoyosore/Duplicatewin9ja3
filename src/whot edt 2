@@ -359,23 +359,42 @@ export default function WhotGame({ gameId, goHome }) {
   useEffect(() => {
     account.get().then(u => setUserId(u.$id));
   }, []);
+
+  // ✅ 👉 DERIVED STATE MUST BE HERE (AFTER STATE, BEFORE FUNCTIONS)
+  if (!game || !userId) return null;
+
+  const myIdx = game.players.indexOf(userId);
+  const oppIdx = myIdx === 0 ? 1 : 0;
+
+  const hand = game.hands?.[myIdx] || [];
+  const oppCards = game.hands?.[oppIdx]?.length || 0;
+
+  const top = decodeCard(game.discard);
+
+  const myLabel = myIdx === 0 ? "Player 1" : "Player 2";
+  const oppLabel = myIdx === 0 ? "Player 2" : "Player 1";
+
+  // =========================
+  // 🔄 LOAD GAME
+  // =========================
   useEffect(() => {
-  if (!gameId || !userId) return;
+    if (!gameId || !userId) return;
 
-  const load = async () => {
-    let g = null;
+    const load = async () => {
+      let g = null;
 
-    // 🔹 TRY LOAD GAME
-    try {
-      g = await databases.getDocument(
-        DATABASE_ID,
-        GAME_COLLECTION,
-        gameId
-      );
-    } catch (e) {
-      console.warn("Game not found, recovering...");
-    }
+      // 🔹 TRY LOAD GAME
+      try {
+        g = await databases.getDocument(
+          DATABASE_ID,
+          GAME_COLLECTION,
+          gameId
+        );
+      } catch (e) {
+        console.warn("Game not found, recovering...");
+      }
 
+      // (rest of your load logic continues...)
     // 🔹 RECOVER FROM MATCH
     if (!g && gameId) {
       try {
@@ -643,9 +662,60 @@ await databases.updateDocument(
 } finally {
   actionLock.current = false;
 }
-} // ✅ CLOSE playCard properly
+} // ✅ playCard ends here
 
 
+// 👇 ADD IT HERE (NOT ABOVE, NOT INSIDE)
+async function drawMarket() {
+  if (actionLock.current || game.status === "finished") return;
+  if (game.turn !== userId) return invalidMove("Not your turn");
+
+  actionLock.current = true;
+
+  try {
+    const g = JSON.parse(JSON.stringify(game));
+
+    let drawCount = g.pendingPick > 0 ? g.pendingPick : 1;
+
+    if (!g.deck.length) {
+      const updated = handleEmptyMarket(g, gameId);
+
+      await databases.updateDocument(
+        DATABASE_ID,
+        GAME_COLLECTION,
+        gameId,
+        encodeGame(updated)
+      );
+
+      return;
+    }
+
+    for (let i = 0; i < drawCount; i++) {
+      if (!g.deck.length) break;
+      g.hands[myIdx].push(g.deck.pop());
+    }
+
+    g.pendingPick = 0;
+    g.turn = g.players[oppIdx];
+
+    g.history = pushHistory(
+      g,
+      `${myLabel} drew ${drawCount} card${drawCount > 1 ? "s" : ""}`
+    );
+
+    await databases.updateDocument(
+      DATABASE_ID,
+      GAME_COLLECTION,
+      gameId,
+      encodeGame(g)
+    );
+
+  } catch (err) {
+    console.error(err);
+  } finally {
+    actionLock.current = false;
+  }
+}
 // ✅ DERIVED STATE (MISSING BEFORE)
 if (!game || !userId) return null;
 
