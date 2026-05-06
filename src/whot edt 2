@@ -627,46 +627,25 @@ if (!g.hands[myIdx].length) {
 }
 
     // ✅ NORMAL TURN
-    await databases.updateDocument(
-      DATABASE_ID,
-      GAME_COLLECTION,
-      gameId,
-      {
-        ...encodeGame(g),
-        discard: card,
-        turn: nextTurn
-      }
-    );
-
-  } catch (err) {
-    console.error(err);
-  } finally {
-    actionLock.current = false;
+await databases.updateDocument(
+  DATABASE_ID,
+  GAME_COLLECTION,
+  gameId,
+  {
+    ...encodeGame(g),
+    discard: card,
+    turn: nextTurn
   }
-  }
-      return;
-    }
+);
 
-    // NORMAL FLOW
-    g.pendingPick = 0;
-
-    await databases.updateDocument(
-      DATABASE_ID,
-      GAME_COLLECTION,
-      gameId,
-      {
-        ...encodeGame(g),
-        turn: g.players[oppIdx]
-      }
-    );
-
-  } catch (err) {
-    console.error(err);
-  } finally {
-    actionLock.current = false;
-  }
+} catch (err) {
+  console.error(err);
+} finally {
+  actionLock.current = false;
 }
+} // ✅ CLOSE FUNCTION HERE
 return (
+  <div style={styles.bg}>
     <div style={styles.bg}>
       <div style={styles.box}>
 
