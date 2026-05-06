@@ -643,149 +643,168 @@ await databases.updateDocument(
 } finally {
   actionLock.current = false;
 }
-} // ✅ CLOSE FUNCTION HERE
+} // ✅ CLOSE playCard properly
+
+
+// ✅ DERIVED STATE (MISSING BEFORE)
+if (!game || !userId) return null;
+
+const myIdx = game.players.indexOf(userId);
+const oppIdx = myIdx === 0 ? 1 : 0;
+
+const hand = game.hands?.[myIdx] || [];
+const oppCards = game.hands?.[oppIdx]?.length || 0;
+
+const top = decodeCard(game.discard);
+
+const myLabel = myIdx === 0 ? "Player 1" : "Player 2";
+const oppLabel = myIdx === 0 ? "Player 2" : "Player 1";
+
+
+// =====================
+// 🎨 UI RENDER
+// =====================
 return (
   <div style={styles.bg}>
-    <div style={styles.bg}>
-      <div style={styles.box}>
+    <div style={styles.box}>
 
-        {error && <div style={styles.error}>{error}</div>}
+      {error && <div style={styles.error}>{error}</div>}
 
-        {/* 🆕 TITLE */}
-        <h3 style={{ textAlign: "center", marginBottom: 6 }}>
-          🎮 Whot Game
-        </h3>
+      <h3 style={{ textAlign: "center", marginBottom: 6 }}>
+        🎮 Whot Game
+      </h3>
 
-        <div style={styles.row}>
-          <span>Player 1 ({game.hostName})</span>
-          <span>VS</span>
-          <span>Player 2 ({game.opponentName})</span>
-        </div>
-
-        <div style={{ textAlign: "center" }}>
-          {Array.from({ length: oppCards }).map((_, i) => (
-            <img key={i} src={drawBack()} style={{ width: 40 }} />
-          ))}
-          <div>{oppLabel} Cards: {oppCards}</div>
-        </div>
-
-        <div style={styles.row}>
-          <span>Round {game.round}</span>
-          <span>{game.scores[0]} - {game.scores[1]}</span>
-        </div>
-
-        <div style={styles.row}>
-          <span>₦{match?.stake || 0}</span>
-          <span>🏦 ₦{match?.pot || 0}</span>
-        </div>
-
-        {/* 🆕 TURN + MESSAGE BUTTON */}
-        <div style={{ textAlign: "center", marginTop: 6 }}>
-          <p>
-            {game.status === "finished"
-              ? "🏁 FINISHED"
-              : game.turn === userId
-              ? "🟢 YOUR TURN"
-              : "⏳ OPPONENT"}
-          </p>
-
-          <button
-            style={styles.chatBtn}
-            onClick={() => setShowChat(true)}
-          >
-            💬 Message
-          </button>
-        </div>
-
-        <div style={styles.center}>
-          {top && <img src={drawCard(top)} style={styles.card} />}
-          <button style={styles.marketBtn} onClick={drawMarket}>
-            🃏 {game.deck.length}
-          </button>
-        </div>
-
-        <div style={styles.hand}>
-          {hand.map((c, i) => (
-            <img
-              key={i}
-              src={drawCard(decodeCard(c))}
-              style={styles.card}
-              onClick={() => playCard(i)}
-            />
-          ))}
-        </div>
-{showWin && (
-  <div style={styles.winBox}>
-    🎉 You Won ₦{match?.pot || 0}
-  </div>
-)}
-
-{/* 📝 HISTORY */}
-<div style={styles.history}>
-  {game.history.slice().reverse().map((h, i) => (
-    <div key={i}>{h}</div>
-  ))}
-</div>
-
-{/* ✅ MESSAGE BUTTON (NOW BELOW POT AREA) */}
-<div style={{ textAlign: "center", marginTop: 6 }}>
-  <button
-    style={{ ...styles.chatBtn, position: "relative" }}
-    onClick={() => {
-      setShowChat(true);
-
-      // 🔴 clear unread instantly
-      setMatch(prev =>
-        prev ? { ...prev, hasUnread: false } : prev
-      );
-    }}
-  >
-    💬 Message
-
-    {/* 🔴 RED DOT */}
-    {match?.hasUnread && (
-      <span
-        style={{
-          position: "absolute",
-          top: -3,
-          right: -3,
-          width: 10,
-          height: 10,
-          background: "red",
-          borderRadius: "50%"
-        }}
-      />
-    )}
-  </button>
-</div>
-
-<button onClick={goHome}>Exit</button>
-
-{/* ===================== */}
-{/* 💬 CHAT POPUP */}
-{/* ===================== */}
-{showChat && (
-  <div style={styles.chatOverlay}>
-    <div style={styles.chatBox}>
-
-      <div style={styles.chatHeader}>
-        <span>💬 Match Chat</span>
-        <button onClick={() => setShowChat(false)}>❌</button>
+      <div style={styles.row}>
+        <span>Player 1 ({game.hostName})</span>
+        <span>VS</span>
+        <span>Player 2 ({game.opponentName})</span>
       </div>
 
-      <Messages 
-        matchId={game.matchId}
-        onRead={() => {
-          setMatch(prev =>
-            prev ? { ...prev, hasUnread: false } : prev
-          );
-        }}
-      />
+      <div style={{ textAlign: "center" }}>
+        {Array.from({ length: oppCards }).map((_, i) => (
+          <img key={i} src={drawBack()} style={{ width: 40 }} />
+        ))}
+        <div>{oppLabel} Cards: {oppCards}</div>
+      </div>
 
+      <div style={styles.row}>
+        <span>Round {game.round}</span>
+        <span>{game.scores[0]} - {game.scores[1]}</span>
+      </div>
+
+      <div style={styles.row}>
+        <span>₦{match?.stake || 0}</span>
+        <span>🏦 ₦{match?.pot || 0}</span>
+      </div>
+
+      <div style={{ textAlign: "center", marginTop: 6 }}>
+        <p>
+          {game.status === "finished"
+            ? "🏁 FINISHED"
+            : game.turn === userId
+            ? "🟢 YOUR TURN"
+            : "⏳ OPPONENT"}
+        </p>
+
+        <button
+          style={styles.chatBtn}
+          onClick={() => setShowChat(true)}
+        >
+          💬 Message
+        </button>
+      </div>
+
+      <div style={styles.center}>
+        {top && <img src={drawCard(top)} style={styles.card} />}
+        <button style={styles.marketBtn} onClick={drawMarket}>
+          🃏 {game.deck.length}
+        </button>
+      </div>
+
+      <div style={styles.hand}>
+        {hand.map((c, i) => (
+          <img
+            key={i}
+            src={drawCard(decodeCard(c))}
+            style={styles.card}
+            onClick={() => playCard(i)}
+          />
+        ))}
+      </div>
+
+      {showWin && (
+        <div style={styles.winBox}>
+          🎉 You Won ₦{match?.pot || 0}
+        </div>
+      )}
+
+      <div style={styles.history}>
+        {game.history.slice().reverse().map((h, i) => (
+          <div key={i}>{h}</div>
+        ))}
+      </div>
+
+      {/* CHAT BUTTON WITH RED DOT */}
+      <div style={{ textAlign: "center", marginTop: 6 }}>
+        <button
+          style={{ ...styles.chatBtn, position: "relative" }}
+          onClick={() => {
+            setShowChat(true);
+            setMatch(prev =>
+              prev ? { ...prev, hasUnread: false } : prev
+            );
+          }}
+        >
+          💬 Message
+
+          {match?.hasUnread && (
+            <span
+              style={{
+                position: "absolute",
+                top: -3,
+                right: -3,
+                width: 10,
+                height: 10,
+                background: "red",
+                borderRadius: "50%"
+              }}
+            />
+          )}
+        </button>
+      </div>
+
+      <button onClick={goHome}>Exit</button>
+
+      {/* CHAT POPUP */}
+      {showChat && (
+        <div style={styles.chatOverlay}>
+          <div style={styles.chatBox}>
+
+            <div style={styles.chatHeader}>
+              <span>💬 Match Chat</span>
+              <button onClick={() => setShowChat(false)}>❌</button>
+            </div>
+
+            <Messages 
+              matchId={game.matchId}
+              onRead={() => {
+                setMatch(prev =>
+                  prev ? { ...prev, hasUnread: false } : prev
+                );
+              }}
+            />
+
+          </div>
+        </div>
+      )}
     </div>
   </div>
-)}
-        // 🎨 FINAL STYLES
+);
+
+
+// =====================
+// 🎨 STYLES (MOVED OUTSIDE JSX)
+// =====================
 const styles = {
   bg: {
     minHeight: "100vh",
@@ -853,8 +872,6 @@ const styles = {
     fontSize: 12,
     color: "#ff4d4d"
   },
-
-  // 💬 CHAT UI
   chatBtn: {
     background: "#2563eb",
     color: "#fff",
