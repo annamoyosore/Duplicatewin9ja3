@@ -357,9 +357,9 @@ export default function WhotGame({ gameId, goHome }) {
   }
 
   // 🔑 GET USER
-  useEffect(() => {
-    account.get().then(u => setUserId(u.$id));
-  }, []);
+useEffect(() => {
+  account.get().then(u => setUserId(u.$id));
+}, []);
 
 // =========================
 // 🔄 LOAD + REALTIME
@@ -381,7 +381,7 @@ useEffect(() => {
       console.warn("Game not found, recovering...");
     }
 
-    // 🔹 RECOVER FROM MATCH
+    // 🔹 RECOVER FROM MATCH (ONLY if game truly doesn't exist)
     if (!g) {
       try {
         const matchRes = await databases.listDocuments(
@@ -440,18 +440,25 @@ useEffect(() => {
     // 🔹 SET GAME
     if (g) {
       const parsed = ensureGameReady(parseGame(g));
-      setGame(parsed);
 
-      // 💰 PAYOUT (ON LOAD)
-      if (
-        parsed.status === "finished" &&
-        parsed.winnerId &&
-        !parsed.payoutDone &&
-        !payoutRef.current
-      ) {
-        payoutRef.current = true;
-        handlePayout(parsed);
+      // 🛑 IMPORTANT: DO NOT mutate or re-init finished game
+      if (parsed.status === "finished") {
+        setGame(parsed);
+
+        // 💰 PAYOUT (ON LOAD)
+        if (
+          parsed.winnerId &&
+          !parsed.payoutDone &&
+          !payoutRef.current
+        ) {
+          payoutRef.current = true;
+          handlePayout(parsed);
+        }
+
+        return; // ✅ STOP here
       }
+
+      setGame(parsed);
     }
   };
 
@@ -462,29 +469,24 @@ useEffect(() => {
     `databases.${DATABASE_ID}.collections.${GAME_COLLECTION}.documents.${gameId}`,
     (res) => {
       const parsed = parseGame(res.payload);
-      setGame(parsed);
 
-      // 💰 PAYOUT (REALTIME)
-      if (
-        parsed.status === "finished" &&
-        parsed.winnerId &&
-        !parsed.payoutDone &&
-        !payoutRef.current
-      ) {
-        payoutRef.current = true;
-        handlePayout(parsed);
-      }
-
-      // 🏁 GAME END UI
+      // 🛑 IMPORTANT: stop any logic if finished
       if (parsed.status === "finished") {
-        if (parsed.winnerId === userId) {
-          setShowWin(true);
-          successSound();
-          setTimeout(goHome, 3000);
-        } else {
-          setTimeout(goHome, 2500);
+        setGame(parsed);
+
+        if (
+          parsed.winnerId &&
+          !parsed.payoutDone &&
+          !payoutRef.current
+        ) {
+          payoutRef.current = true;
+          handlePayout(parsed);
         }
+
+        return; // ✅ prevents restart bugs
       }
+
+      setGame(parsed);
     }
   );
 
@@ -568,9 +570,25 @@ async function playCard(i) {
   try {
     const g = JSON.parse(JSON.stringify(game));
 
+    // ✅ SAFE INDEX
+    const myIdx = g.players.indexOf(userId);
+    if (myIdx === -1) {
+      actionLock.current = false;
+      return;
+    }
+
+    const oppIdx = myIdx === 0 ? 1 : 0;
+    const myLabel = myIdx === 0 ? "Player 1" : "Player 2";
+
     const card = g.hands[myIdx][i];
     const current = decodeCard(card);
     const topDecoded = decodeCard(g.discard);
+
+    // ✅ SAFETY
+    if (!current || !topDecoded) {
+      actionLock.current = false;
+      return invalidMove("Game error");
+    }
 
     // 🔒 PICK STACK RULE
     if (g.pendingPick > 0 && ![2, 14].includes(current.number)) {
@@ -600,36 +618,50 @@ async function playCard(i) {
 
     g.history = pushHistory(g, `${myLabel} played ${card}`);
 
+    // =========================
     // 🏆 ROUND WIN
+    // =========================
     if (!g.hands[myIdx].length) {
-      g.scores[myIdx]++;
+      const newScores = [...(g.scores || [0, 0])];
+      newScores[myIdx]++;
 
-      // 🏁 MATCH WIN
-      if (g.scores[myIdx] >= 2) {
+      // 🏁 MATCH FINISH (FIRST TO 2)
+      if (newScores[myIdx] >= 2) {
         await databases.updateDocument(
           DATABASE_ID,
           GAME_COLLECTION,
           gameId,
           {
             ...encodeGame(g),
+            scores: newScores,
             status: "finished",
             winnerId: userId,
             payoutDone: false,
-            turn: null
+            turn: null,
+            history: pushHistory(
+              g,
+              `🏆 ${myLabel} wins the match`
+            )
           }
         );
 
         return;
       }
 
-      // 🔁 NEW ROUND
+      // 🔁 NEXT ROUND
       const deck = createDeck();
 
       g.hands = [deck.splice(0, 6), deck.splice(0, 6)];
       g.discard = deck.pop();
       g.deck = deck;
       g.pendingPick = 0;
-      g.round++;
+      g.round = (g.round || 1) + 1;
+      g.scores = newScores;
+
+      g.history = pushHistory(
+        g,
+        `♻️ Round ${g.round} started`
+      );
 
       await databases.updateDocument(
         DATABASE_ID,
@@ -641,7 +673,9 @@ async function playCard(i) {
       return;
     }
 
-    // ✅ NORMAL TURN
+    // =========================
+    // 🎮 NORMAL TURN
+    // =========================
     await databases.updateDocument(
       DATABASE_ID,
       GAME_COLLECTION,
@@ -656,7 +690,6 @@ async function playCard(i) {
   } catch (err) {
     console.error(err);
   } finally {
-    // ✅ ALWAYS RELEASE LOCK
     actionLock.current = false;
   }
 }
@@ -672,11 +705,21 @@ async function drawMarket() {
   try {
     const g = JSON.parse(JSON.stringify(game));
 
+    // ✅ SAFE INDEX
+    const myIdx = g.players.indexOf(userId);
+    if (myIdx === -1) {
+      actionLock.current = false;
+      return;
+    }
+
+    const oppIdx = myIdx === 0 ? 1 : 0;
+    const myLabel = myIdx === 0 ? "Player 1" : "Player 2";
+
     const drawCount = g.pendingPick > 0 ? g.pendingPick : 1;
 
     // 🧠 HANDLE EMPTY MARKET
     if (!g.deck.length) {
-      const updated = handleEmptyMarket(g, gameId);
+      const updated = handleEmptyMarket(g);
 
       await databases.updateDocument(
         DATABASE_ID,
@@ -711,12 +754,13 @@ async function drawMarket() {
       gameId,
       encodeGame(g)
     );
-} catch (err) {
+
+  } catch (err) {
     console.error("drawMarket error:", err);
   } finally {
     actionLock.current = false;
   }
-} // ✅ ONLY ONE closing brace here
+}
 
 
 // =========================
@@ -725,6 +769,8 @@ async function drawMarket() {
 if (!game || !userId) return null;
 
 const myIdx = game.players.indexOf(userId);
+if (myIdx === -1) return null; // ✅ prevent crash
+
 const oppIdx = myIdx === 0 ? 1 : 0;
 
 const hand = game.hands?.[myIdx] || [];
@@ -791,7 +837,14 @@ return (
 
       <div style={styles.center}>
         {top && <img src={drawCard(top)} style={styles.card} />}
-        <button style={styles.marketBtn} onClick={drawMarket}>
+        <button
+          style={{
+            ...styles.marketBtn,
+            opacity: game.turn !== userId ? 0.5 : 1
+          }}
+          disabled={game.turn !== userId}
+          onClick={drawMarket}
+        >
           🃏 {game.deck.length}
         </button>
       </div>
@@ -800,87 +853,85 @@ return (
         {hand.map((c, i) => (
           <img
             key={i}
-           src={drawCard(decodeCard(c))}
-        style={styles.card}
-        onClick={() => playCard(i)}
-      />
-    ))}
-  </div>
+            src={drawCard(decodeCard(c))}
+            style={styles.card}
+            onClick={() => playCard(i)}
+          />
+        ))}
+      </div>
 
-  {showWin && (
-    <div style={styles.winBox}>
-      🎉 You Won ₦{match?.pot || 0}
-    </div>
-  )}
-
-  <div style={styles.history}>
-    {(game.history || [])
-      .slice()
-      .reverse()
-      .map((h, i) => (
-        <div key={i}>{h}</div>
-      ))}
-  </div>
-
-  {/* CHAT BUTTON WITH RED DOT */}
-  <div style={{ textAlign: "center", marginTop: 6 }}>
-    <button
-      style={{ ...styles.chatBtn, position: "relative" }}
-      onClick={() => {
-        setShowChat(true);
-        setMatch(prev =>
-          prev ? { ...prev, hasUnread: false } : prev
-        );
-      }}
-    >
-      💬 Message
-
-      {match?.hasUnread && (
-        <span
-          style={{
-            position: "absolute",
-            top: -3,
-            right: -3,
-            width: 10,
-            height: 10,
-            background: "red",
-            borderRadius: "50%"
-          }}
-        />
-      )}
-    </button>
-  </div>
-
-  <button onClick={goHome}>Exit</button>
-
-  {/* CHAT POPUP */}
-  {showChat && game?.matchId && (
-    <div style={styles.chatOverlay}>
-      <div style={styles.chatBox}>
-
-        <div style={styles.chatHeader}>
-          <span>💬 Match Chat</span>
-          <button onClick={() => setShowChat(false)}>❌</button>
+      {showWin && (
+        <div style={styles.winBox}>
+          🎉 You Won ₦{match?.pot || 0}
         </div>
+      )}
 
-        <Messages
-          matchId={game.matchId}
-          onRead={() => {
+      <div style={styles.history}>
+        {(game.history || [])
+          .slice()
+          .reverse()
+          .map((h, i) => (
+            <div key={i}>{h}</div>
+          ))}
+      </div>
+
+      {/* CHAT BUTTON WITH RED DOT */}
+      <div style={{ textAlign: "center", marginTop: 6 }}>
+        <button
+          style={{ ...styles.chatBtn, position: "relative" }}
+          onClick={() => {
+            setShowChat(true);
             setMatch(prev =>
               prev ? { ...prev, hasUnread: false } : prev
             );
           }}
-        />
+        >
+          💬 Message
 
+          {match?.hasUnread && (
+            <span
+              style={{
+                position: "absolute",
+                top: -3,
+                right: -3,
+                width: 10,
+                height: 10,
+                background: "red",
+                borderRadius: "50%"
+              }}
+            />
+          )}
+        </button>
       </div>
+
+      <button onClick={goHome}>Exit</button>
+
+      {/* CHAT POPUP */}
+      {showChat && game?.matchId && (
+        <div style={styles.chatOverlay}>
+          <div style={styles.chatBox}>
+
+            <div style={styles.chatHeader}>
+              <span>💬 Match Chat</span>
+              <button onClick={() => setShowChat(false)}>❌</button>
+            </div>
+
+            <Messages
+              matchId={game.matchId}
+              onRead={() => {
+                setMatch(prev =>
+                  prev ? { ...prev, hasUnread: false } : prev
+                );
+              }}
+            />
+
+          </div>
+        </div>
+      )}
+
     </div>
-  )}
-
-</div>
-</div>
-); // ✅ CLOSE JSX
-
-} // ✅ CLOSE COMPONENT
+  </div>
+);
 
 
 // =====================
@@ -889,7 +940,7 @@ return (
 const styles = {
   bg: {
     minHeight: "100vh",
-    background: "linear-gradient(135deg, #065f46, #064e3b)", // nicer gradient
+    background: "linear-gradient(135deg, #065f46, #064e3b)",
     display: "flex",
     justifyContent: "center",
     alignItems: "center"
@@ -902,7 +953,7 @@ const styles = {
     padding: 12,
     color: "#fff",
     borderRadius: 12,
-    backdropFilter: "blur(6px)", // 🔥 smoother UI
+    backdropFilter: "blur(6px)",
     boxShadow: "0 0 20px rgba(0,0,0,0.6)"
   },
 
@@ -927,6 +978,11 @@ const styles = {
     transition: "transform 0.15s ease"
   },
 
+  // 🔥 small UX boost
+  cardHover: {
+    transform: "scale(1.08)"
+  },
+
   center: {
     display: "flex",
     justifyContent: "center",
@@ -937,84 +993,4 @@ const styles = {
   marketBtn: {
     background: "gold",
     padding: 10,
-    borderRadius: 8,
-    border: "none",
-    cursor: "pointer",
-    fontWeight: "bold"
-  },
-
-  winBox: {
-    position: "fixed",
-    top: "40%",
-    left: "50%",
-    transform: "translate(-50%, -50%)",
-    background: "gold",
-    color: "#000",
-    padding: 20,
-    borderRadius: 12,
-    zIndex: 999,
-    fontWeight: "bold",
-    boxShadow: "0 0 20px rgba(255,215,0,0.7)"
-  },
-
-  error: {
-    background: "#dc2626",
-    padding: 6,
-    textAlign: "center",
-    marginBottom: 6,
-    borderRadius: 6,
-    fontSize: 12
-  },
-
-  history: {
-    marginTop: 10,
-    maxHeight: 120,
-    overflowY: "auto",
-    fontSize: 12,
-    color: "#ff4d4d",
-    background: "#111",
-    padding: 6,
-    borderRadius: 6
-  },
-
-  chatBtn: {
-    background: "#2563eb",
-    color: "#fff",
-    padding: "6px 12px",
-    borderRadius: 6,
-    border: "none",
-    cursor: "pointer",
-    position: "relative",
-    fontSize: 13
-  },
-
-  chatOverlay: {
-    position: "fixed",
-    top: 0,
-    left: 0,
-    width: "100%",
-    height: "100%",
-    background: "rgba(0,0,0,0.75)",
-    display: "flex",
-    justifyContent: "center",
-    alignItems: "center",
-    zIndex: 9999
-  },
-
-  chatBox: {
-    width: "95%",
-    maxWidth: 400,
-    background: "#111",
-    padding: 10,
-    borderRadius: 12,
-    boxShadow: "0 0 15px rgba(0,0,0,0.6)"
-  },
-
-  chatHeader: {
-    display: "flex",
-    justifyContent: "space-between",
-    marginBottom: 8,
-    fontSize: 14,
-    fontWeight: "bold"
-  }
-};
+    borderRadius: 8
