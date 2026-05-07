@@ -667,27 +667,17 @@ useEffect(() => {
       } catch {}
     }
 
-    // 🔹 SET GAME
-    if (g) {
-      const parsed = ensureGameReady(parseGame(g));
+ // 🔹 SET GAME
+if (g) {
 
-      setGame(parsed);
+  const parsed = ensureGameReady(parseGame(g));
 
-      // 💰 PAYOUT ON LOAD
-      if (
-        parsed.status === "finished" &&
-        parsed.winnerId &&
-        !parsed.payoutDone &&
-        !payoutRef.current
-      ) {
-        payoutRef.current = true;
+  setGame(parsed);
+}
 
-        handlePayout(parsed);
-      }
-    }
-  };
+};
 
-  load();
+load();
 
 // 🔄 REALTIME SUBSCRIBE
 const unsub = databases.client.subscribe(
@@ -698,12 +688,16 @@ const unsub = databases.client.subscribe(
 
     setGame(parsed);
 
-    // 💰 ONLY WINNER CAN PAYOUT
+    // 💰 ONLY WINNER CAN PAYOUT ONCE
     if (
       parsed.status === "finished" &&
       parsed.winnerId === userId &&
-      !parsed.payoutDone
+      !parsed.payoutDone &&
+      !payoutRef.current
     ) {
+
+      payoutRef.current = true;
+
       await handlePayout(parsed);
     }
 
@@ -801,6 +795,11 @@ return () => {
 // =========================
 async function handlePayout(g) {
 
+  // ✅ HARD LOCK
+  if (payoutRef.current === "paid") {
+    return;
+  }
+
   try {
 
     if (!g.matchId) return;
@@ -831,6 +830,8 @@ async function handlePayout(g) {
         }
       );
 
+      payoutRef.current = "paid";
+
       return;
     }
 
@@ -858,6 +859,8 @@ async function handlePayout(g) {
           turn: null
         }
       );
+
+      payoutRef.current = "paid";
 
       return;
     }
@@ -921,6 +924,9 @@ async function handlePayout(g) {
 
     console.log("✅ payout success");
 
+    // 🔒 LOCK FOREVER
+    payoutRef.current = "paid";
+
   } catch (err) {
 
     console.error(
@@ -930,6 +936,7 @@ async function handlePayout(g) {
   }
 }
 
+// =========================
 // =========================
 // 🎮 PLAY CARD
 // =========================
